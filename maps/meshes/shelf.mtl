@@ -1,0 +1,181 @@
+# File produced by Open Asset Import Library (http://www.assimp.sf.net)
+# (assimp v5.2.0)
+
+newmtl $Material_0
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_1
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_2
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_3
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_4
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_5
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_6
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_7
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_8
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_9
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_10
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_11
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_12
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_13
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_14
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_15
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_16
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_17
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_18
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_19
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_20
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_21
+Kd 0.829999983 0.730000019 0
+Ka 0.829999983 0.730000019 0
+Ks 0.25 0.25 0.25
+Ke 0 0 0
+illum 1
+
+newmtl $Material_22
+Kd 1 1 1
+Ka 1 1 1
+Ks 0 0 0
+Ke 0 0 0
+illum 1
+map_Kd shelf_2180012.png
+
+newmtl $Material_23
+Kd 1 1 1
+Ka 1 1 1
+Ks 0 0 0
+Ke 0 0 0
+illum 1
+map_Kd shelf_2180015.png
+
+newmtl $Material_24
+Kd 1 1 1
+Ka 1 1 1
+Ks 0 0 0
+Ke 0 0 0
+illum 1
+map_Kd shelf_2180010.png
+

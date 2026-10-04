@@ -1,0 +1,24 @@
+# Navigation Parameters for RRT* and Wavefront Planners
+rrt_star_node:
+  ros__parameters:
+    use_sim_time: false           # False since CoppeliaSim does not publish /clock
+    Kp: 18.5                      # Proportional gain (for feedback_linearization)
+    lookahead_dist: 0.5           # Lookahead distance (meters) for pure_pursuit
+    safe_distance: 0.6            # Obstacle inflation safety distance (meters)
+    distance_threshold: 0.25      # Goal tolerance threshold (meters)
+    path_following_strategy: "pure_pursuit" # "pure_pursuit" or "feedback_linearization"
+    neighborhood_method: 8        # 8 or 4 neighbor connectivity
+    max_linear_vel: 0.8           # Max linear speed (m/s)
+    max_angular_vel: 1.0          # Max angular speed (rad/s)
+
+wavefront_node:
+  ros__parameters:
+    use_sim_time: false           # False since CoppeliaSim does not publish /clock
+    Kp: 18.5
+    lookahead_dist: 0.6
+    safe_distance: 0.6
+    distance_threshold: 0.25
+    path_following_strategy: "pure_pursuit"
+    neighborhood_method: 8
+    max_linear_vel: 0.8
+    max_angular_vel: 1.0

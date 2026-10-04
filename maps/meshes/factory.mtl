@@ -1,0 +1,168 @@
+# factory.mtl - Complete Material Library
+
+newmtl floor_material
+Kd 1.0 1.0 1.0
+Ka 0.2 0.2 0.2
+Ks 0.1 0.1 0.1
+illum 1
+map_Kd textures/floor_concrete.png
+
+newmtl wall_material
+Kd 0.9 0.9 0.9
+Ka 0.2 0.2 0.2
+Ks 0.1 0.1 0.1
+illum 1
+map_Kd textures/wall_industrial.png
+
+newmtl column_material
+Kd 0.35 0.38 0.40
+Ka 0.15 0.15 0.15
+Ks 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_0
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_1
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_2
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_3
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_4
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_5
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_6
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_7
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_8
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_9
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_10
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_11
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_12
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_13
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_14
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_15
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_16
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_17
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_18
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_19
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_20
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_21
+Kd 0.829999983 0.730000019 0
+Ka 0.2 0.2 0.2
+illum 1
+
+newmtl shelf_$Material_22
+Kd 1 1 1
+Ka 0.2 0.2 0.2
+illum 1
+map_Kd shelf_2180012.png
+
+newmtl shelf_$Material_23
+Kd 1 1 1
+Ka 0.2 0.2 0.2
+illum 1
+map_Kd shelf_2180015.png
+
+newmtl shelf_$Material_24
+Kd 1 1 1
+Ka 0.2 0.2 0.2
+illum 1
+map_Kd shelf_2180010.png
+
+newmtl boxes_$Material_0
+Kd 1 1 1
+Ka 0.2 0.2 0.2
+illum 1
+map_Kd shippingBoxes_2180010.png
+
+newmtl trash_$Material_0
+Kd 1 1 1
+Ka 0.2 0.2 0.2
+illum 1
+map_Kd trashcan_2180016.png
+
+newmtl bucket_$Material_0
+Kd 1 1 1
+Ka 0.2 0.2 0.2
+illum 1
+map_Kd buckets_2180011.png
+

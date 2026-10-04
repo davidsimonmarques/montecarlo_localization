@@ -1,0 +1,58 @@
+montecarlo_localization_node:
+  ros__parameters:
+    # Frame IDs
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+
+    # Topics
+    scan_topic: "/scan"
+    map_topic: "/map"
+    odom_topic: "/odom"
+
+    # TF Publishing
+    publish_tf: true
+
+    # Filter Particle Parameters
+    num_particles: 8000
+    update_min_d: 0.1         # Metros minimos para disparar update com laser
+    update_min_a: 0.1         # Radianos minimos para disparar update com laser
+    resample_on_update: true  # Reamostrar imediatamente apos update do sensor
+
+    # Odometry Motion Model Noise Parameters (alpha1 - alpha4)
+    # alpha1: ruido de rotacao resultante de rotacao
+    # alpha2: ruido de rotacao resultante de translacao
+    # alpha3: ruido de translacao resultante de translacao
+    # alpha4: ruido de translacao resultante de rotacao
+    alpha1: 0.02
+    alpha2: 0.02
+    alpha3: 0.02
+    alpha4: 0.02
+
+    # Sensor Model Parameters (Likelihood Field para LaserScan)
+    # z_hit: peso do componente de acerto no obstaculo
+    # z_rand: peso do componente de ruido aleatorio uniforme
+    # sigma_hit: desvio padrao do modelo gaussiano de acerto (metros)
+    z_hit: 0.85
+    z_rand: 0.15
+    sigma_hit: 0.15
+    min_range: 0.1
+    max_range: 5.0
+    beam_skip: 2              # Subamostragem de feixes do laser
+    max_beams: 100            # Maximo de feixes processados por scan
+
+    # Augmented MCL (Recuperacao de sequestro do robo / perda de localizacao)
+    enable_recovery: false
+    alpha_slow: 0.001         # Taxa de decaimento da media lenta de verossimilhanca
+    alpha_fast: 0.1           # Taxa de decaimento da media rapida de verossimilhanca
+    recovery_max_prob: 0.2    # Limite maximo de probabilidade de injecao de particulas aleatorias
+
+    # Initial Pose
+    auto_initialize: true              # Inicializa particulas automaticamente ao receber o mapa
+    global_localization_on_start: true # false- Usa a pose inicial configurada
+    initial_pose_x: 11.16
+    initial_pose_y: -8.77
+    initial_pose_yaw: -3.1232 #rad
+    initial_cov_x: 0.25                # Covariancia inicial em X (sigma = 0.5 m)
+    initial_cov_y: 0.25                # Covariancia inicial em Y (sigma = 0.5 m)
+    initial_cov_yaw: 0.068             # Covariancia inicial em Yaw (sigma ~ 15 graus)

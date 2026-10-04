@@ -1,0 +1,51 @@
+montecarlo_localization_node:
+  ros__parameters:
+    # Frame IDs
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+
+    # Topics
+    scan_topic: "/scan"
+    map_topic: "/map"
+    odom_topic: "/odom"
+
+    # TF Publishing
+    publish_tf: true
+
+    # Filter Particle Parameters
+    num_particles: 3000
+    update_min_d: 0.1         # Metros minimos para disparar update com laser
+    update_min_a: 0.1         # Radianos minimos para disparar update com laser
+    resample_on_update: true  # Reamostrar apos update do sensor
+
+    # Odometry Motion Model Noise Parameters (alpha1 - alpha4)
+    alpha1: 0.02
+    alpha2: 0.02
+    alpha3: 0.02
+    alpha4: 0.02
+
+    # Sensor Model Parameters (Likelihood Field para LaserScan)
+    z_hit: 0.85
+    z_rand: 0.15
+    sigma_hit: 0.15
+    min_range: 0.1
+    max_range: 5.0
+    beam_skip: 2              # Subamostragem de feixes do laser
+    max_beams: 60             # Maximo de feixes processados por scan
+
+    # Augmented MCL (Recuperacao de sequestro do robo / perda de localizacao)
+    enable_recovery: true
+    alpha_slow: 0.001         # Taxa de decaimento da media lenta de verossimilhanca
+    alpha_fast: 0.1           # Taxa de decaimento da media rapida de verossimilhanca
+    recovery_max_prob: 0.2    # Limite maximo de probabilidade de injecao de particulas aleatorias
+
+    # Initial Pose (Ajustada para os limites do map_gazebo_world: X em [-1.2, 5.0], Y em [-2.42, 3.38])
+    auto_initialize: true              # Inicializa particulas automaticamente ao receber o mapa
+    global_localization_on_start: true  # Espalha particulas pelo mapa livre para convergir automaticamente
+    initial_pose_x: -1.9999
+    initial_pose_y: -0.50
+    initial_pose_yaw: 0.0
+    initial_cov_x: 0.25                # Covariancia inicial em X (sigma = 0.5 m)
+    initial_cov_y: 0.25                # Covariancia inicial em Y (sigma = 0.5 m)
+    initial_cov_yaw: 0.068             # Covariancia inicial em Yaw (sigma ~ 15 graus)
