@@ -34,8 +34,9 @@ private:
   void timer_tf_callback();
 
   void update_laser_offset_from_tf(const std::string & laser_frame);
-  void publish_pose_and_particles(const rclcpp::Time & stamp);
+  void publish_pose_and_particles(const PoseEstimate & est, const rclcpp::Time & stamp);
   void update_map_to_odom_transform(const PoseEstimate & est, const rclcpp::Time & stamp);
+  void send_map_to_odom(const rclcpp::Time & stamp);
 
   // Engine instance
   MCLEngine engine_;
@@ -64,6 +65,7 @@ private:
   std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
   geometry_msgs::msg::TransformStamped map_to_odom_tf_;
   bool has_valid_tf_{false};
+  rclcpp::Time last_tf_stamp_{0, 0, RCL_ROS_TIME};
   bool laser_offset_resolved_{false};
 
   // Subscriptions & Publishers

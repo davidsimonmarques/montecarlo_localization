@@ -131,8 +131,10 @@ double SensorModel::update_weights(
     }
   }
 
-  // Return average raw likelihood factor for augmented recovery tracking
-  double avg_likelihood = sum_weights / static_cast<double>(particles.size());
+  // Return the true average unnormalized observation likelihood (Probabilistic Robotics, Table 8.3: w_avg = 1/M * sum w)
+  // Factoring back exp(max_log_w) from the log-sum-exp stabilization:
+  double avg_likelihood =
+    std::exp(max_log_w) * sum_weights / static_cast<double>(particles.size());
   return avg_likelihood;
 }
 

@@ -14,16 +14,15 @@ The algorithm probabilistically estimates the 2D robot pose $(x, y, \theta)$ in 
    * **Gaussian Initialization (`auto_initialize: true`):** Particles are sampled from a Gaussian distribution centered at a user-configured initial pose.
    * **Interactive:** Re-initialized at any time via `/initialpose` (e.g., using the *2D Pose Estimate* tool in RViz).
 2. **Prediction (Motion Model):**
-   * On each odometry message (`/odom`), computes incremental motion $(\delta\text{rot}_1, \delta\text{trans}, \delta\text{rot}_2)$ and propagates particles with Gaussian noise governed by coefficients $\alpha_1, \alpha_2, \alpha_3, \alpha_4$.
+   * Odometry displacement is accumulated between filter steps. When the robot moves past `update_min_d` or `update_min_a`, the accumulated displacement $u_t = (\delta\text{rot}_1, \delta\text{trans}, \delta\text{rot}_2)$ propagates particles using the classical odometry motion model (*sample_motion_model_odometry*, Table 5.6) with Gaussian noise governed by $\alpha_1, \alpha_2, \alpha_3, \alpha_4$.
 3. **Correction (Sensor Model - Likelihood Field):**
-   * For each laser scan (`/scan`), projects valid beam endpoints into world coordinates and queries the distance to the nearest obstacle via a precomputed Euclidean Distance Field (EDF).
-   * Evaluates likelihood using a Gaussian obstacle hit model ($z_{\text{hit}}, \sigma_{\text{hit}}$) combined with a uniform random noise term ($z_{\text{rand}}$).
+   * Projects valid beam endpoints of the current laser scan (`/scan`) into world coordinates and queries obstacle distances via a precomputed Euclidean Distance Field (EDF).
+   * Computes measurement likelihood via Gaussian obstacle hit ($z_{\text{hit}}, \sigma_{\text{hit}}$) and uniform random noise ($z_{\text{rand}} / z_{\max}$) in log-space with log-sum-exp normalization (*likelihood_field_range_finder_model*, Table 6.3). Max-range readings are discarded.
 4. **Resampling:**
-   * Employs Low-Variance Resampling triggered selectively based on the Effective Particle Count ($N_{\text{eff}} < 0.75 \cdot N$) to avoid unnecessary particle depletion.
-   * Out-of-bounds particles or particles inside obstacles are respawned in free space to prevent divergence.
+   * Applies the classical Low-Variance Resampling algorithm (*low_variance_sampler*, Table 4.4) on each measurement update step, resetting all particle weights to $1 / M$.
 5. **Pose Estimation & TF Broadcasting:**
-   * Extracts the estimated pose from a cluster anchored at the highest-weighted particle, avoiding distortion from arithmetic averaging over multimodal distributions.
-   * Continuously computes and broadcasts the dynamic transform **`map -> odom`**.
+   * The estimated pose is computed as the classical weighted sample mean of the particle set (with circular mean $\text{atan2}(\sum w_i \sin\theta_i, \sum w_i \cos\theta_i)$ for yaw) alongside its $3 \times 3$ covariance matrix.
+   * The dynamic transform **`map -> odom`** is recomputed upon each sensor correction and re-broadcast with fresh timestamps on odometry ticks to keep TF listeners synchronized without artificial jitter.
 
 ---
 

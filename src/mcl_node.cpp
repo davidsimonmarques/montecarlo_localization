@@ -183,7 +183,8 @@ void MCLNode::map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
 
     // 3. Publish initial state immediately to /particlecloud and /mcl_pose,
     // allowing the map and particles to be visible in RViz before the robot starts moving.
-    publish_pose_and_particles(this->now());
+    auto est = engine_.get_estimate();
+    publish_pose_and_particles(est, this->now());
   }
 }
 
@@ -216,8 +217,8 @@ void MCLNode::initial_pose_callback(const geometry_msgs::msg::PoseWithCovariance
 
   rclcpp::Time stamp = (msg->header.stamp.sec == 0 && msg->header.stamp.nanosec == 0) ?
                         last_odom_stamp_ : rclcpp::Time(msg->header.stamp);
-  publish_pose_and_particles(stamp);
   auto est = engine_.get_estimate();
+  publish_pose_and_particles(est, stamp);
   update_map_to_odom_transform(est, stamp);
 }
 
@@ -245,12 +246,14 @@ void MCLNode::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
   prev_odom_pose_ = curr_odom_pose_; //current odom becomes previous odometry for next iteration
   curr_odom_pose_ = new_odom; //new odometry is stored
 
-  //[PREDICTION] updates particles positions based on motion model
-  if (engine_.is_initialized()) { //Only updates particles if they're already initialized
-    engine_.predict(prev_odom_pose_, curr_odom_pose_); //predicts the new pose of the robot
-    auto est = engine_.get_estimate(); //gets the estimated pose of the robot
-    update_map_to_odom_transform(est, msg->header.stamp); //updates the transform from the map frame to the odom frame
-  }
+  // In classical MCL (Probabilistic Robotics Table 8.2), motion prediction is applied
+  // once per measurement step with the accumulated displacement since the last update.
+  // Running predict() per odom message causes the effective noise to scale inversely with
+  // the odom rate and injects random angular noise during in-place rotation.
+  //
+  // map->odom is recomputed only upon sensor correction. Between corrections, the cached
+  // transform is re-broadcast with a fresh stamp so TF listeners do not time out.
+  send_map_to_odom(msg->header.stamp);
 }
 
 void MCLNode::update_laser_offset_from_tf(const std::string & laser_frame)
@@ -302,8 +305,12 @@ void MCLNode::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
   }
 
   if (moved || force) {
-    engine_.update_sensor(*msg); //updates particles based on sensor data
-    last_update_odom_pose_ = curr_odom_pose_; //current odom becomes previous odometry for next iteration
+    // [PREDICTION] Apply motion model with the accumulated odometry delta (Table 8.2)
+    engine_.predict(last_update_odom_pose_, curr_odom_pose_);
+
+    // [CORRECTION & RESAMPLING] Evaluate observation likelihood and resample
+    engine_.update_sensor(*msg);
+    last_update_odom_pose_ = curr_odom_pose_;
     scan_update_count_++;
 
     if (force_initial_update_) {
@@ -311,23 +318,23 @@ void MCLNode::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
       RCLCPP_INFO(this->get_logger(), "First sensor update completed. Publishing initial pose estimate.");
     }
 
+    auto est = engine_.get_estimate();
+
     if (global_localization_on_start_ && (scan_update_count_ % 10 == 0)) {
-      auto est = engine_.get_estimate();
       RCLCPP_INFO(this->get_logger(),
         "Global localization progress: %d updates, current estimate: (%.2f, %.2f, %.2f)",
         scan_update_count_, est.pose.x, est.pose.y, est.pose.theta);
     }
 
-    publish_pose_and_particles(msg->header.stamp); //publishes the estimated pose and particles
+    publish_pose_and_particles(est, msg->header.stamp);
 
-    // Also update TF based on current estimate
-    auto est = engine_.get_estimate();
+    // Recompute map->odom transform from the corrected estimate
     update_map_to_odom_transform(est, msg->header.stamp);
   } else {
     // Keep /mcl_pose and /particlecloud active at ~5 Hz even when stationary
     static int stationary_pub_counter = 0;
     if (++stationary_pub_counter % 6 == 0) {
-      publish_pose_and_particles(msg->header.stamp);
+      publish_pose_and_particles(engine_.get_estimate(), msg->header.stamp);
     }
   }
 }
@@ -351,8 +358,6 @@ void MCLNode::update_map_to_odom_transform(const PoseEstimate & est, const rclcp
 
   map_to_odom_tf_.header.frame_id = global_frame_id_;
   map_to_odom_tf_.child_frame_id = odom_frame_id_;
-  // Add a slight future timestamp (50ms) to ensure smooth interpolation by TF listeners
-  map_to_odom_tf_.header.stamp = stamp + rclcpp::Duration::from_seconds(0.05);
 
   map_to_odom_tf_.transform.translation.x = map_to_odom_x;
   map_to_odom_tf_.transform.translation.y = map_to_odom_y;
@@ -365,8 +370,24 @@ void MCLNode::update_map_to_odom_transform(const PoseEstimate & est, const rclcp
   map_to_odom_tf_.transform.rotation.z = qz;
   map_to_odom_tf_.transform.rotation.w = qw;
 
-  tf_broadcaster_->sendTransform(map_to_odom_tf_);
   has_valid_tf_ = true;
+  send_map_to_odom(stamp);
+}
+
+void MCLNode::send_map_to_odom(const rclcpp::Time & stamp)
+{
+  if (!publish_tf_ || !has_valid_tf_) {
+    return;
+  }
+  // Add a slight future timestamp (50ms) to ensure smooth interpolation by TF listeners
+  rclcpp::Time tf_stamp = stamp + rclcpp::Duration::from_seconds(0.05);
+  // Monotonicity check: never broadcast a stamp older than or equal to the previous one
+  if (tf_stamp <= last_tf_stamp_) {
+    return;
+  }
+  map_to_odom_tf_.header.stamp = tf_stamp;
+  tf_broadcaster_->sendTransform(map_to_odom_tf_);
+  last_tf_stamp_ = tf_stamp;
 }
 
 void MCLNode::timer_tf_callback()
@@ -374,9 +395,8 @@ void MCLNode::timer_tf_callback()
   // Intentionally empty. TF is broadcast synchronously with simulator sensor stamps.
 }
 
-void MCLNode::publish_pose_and_particles(const rclcpp::Time & stamp)
+void MCLNode::publish_pose_and_particles(const PoseEstimate & est, const rclcpp::Time & stamp)
 {
-  auto est = engine_.get_estimate();
 
   // Publish PoseWithCovarianceStamped
   geometry_msgs::msg::PoseWithCovarianceStamped pose_msg;
@@ -394,22 +414,26 @@ void MCLNode::publish_pose_and_particles(const rclcpp::Time & stamp)
   pose_msg.pose.pose.orientation.z = qz;
   pose_msg.pose.pose.orientation.w = qw;
 
-  // Fill 6x6 ROS covariance from 3x3 (x, y, yaw)
-  // Indices in 6x6 row-major:
-  // (0,0)->0, (0,1)->1, (0,5)->5
-  // (1,0)->6, (1,1)->7, (1,5)->11
-  // (5,0)->30, (5,1)->31, (5,5)->35
-  pose_msg.pose.covariance[0] = est.covariance[0];   // cov(x,x)
-  pose_msg.pose.covariance[1] = est.covariance[1];   // cov(x,y)
-  pose_msg.pose.covariance[5] = est.covariance[2];   // cov(x,yaw)
+  // Fill 6x6 ROS covariance from 3x3 (x, y, yaw).
+  // Zero out all elements and add tiny positive variance on unmeasured dimensions (Z, roll, pitch)
+  // to ensure the 3D position submatrix is strictly positive definite, preventing RViz from
+  // issuing "[rviz2]: Negative eigenvalue found for position" due to numerical zero-eigenvalue jitter.
+  pose_msg.pose.covariance.fill(0.0);
+  pose_msg.pose.covariance[0] = std::max(1e-4, est.covariance[0]);   // cov(x,x)
+  pose_msg.pose.covariance[1] = est.covariance[1];                   // cov(x,y)
+  pose_msg.pose.covariance[5] = est.covariance[2];                   // cov(x,yaw)
 
-  pose_msg.pose.covariance[6] = est.covariance[3];   // cov(y,x)
-  pose_msg.pose.covariance[7] = est.covariance[4];   // cov(y,y)
-  pose_msg.pose.covariance[11] = est.covariance[5];  // cov(y,yaw)
+  pose_msg.pose.covariance[6] = est.covariance[3];                   // cov(y,x)
+  pose_msg.pose.covariance[7] = std::max(1e-4, est.covariance[4]);   // cov(y,y)
+  pose_msg.pose.covariance[11] = est.covariance[5];                  // cov(y,yaw)
 
-  pose_msg.pose.covariance[30] = est.covariance[6];  // cov(yaw,x)
-  pose_msg.pose.covariance[31] = est.covariance[7];  // cov(yaw,y)
-  pose_msg.pose.covariance[35] = est.covariance[8];  // cov(yaw,yaw)
+  pose_msg.pose.covariance[14] = 1e-4;                               // cov(z,z)
+  pose_msg.pose.covariance[21] = 1e-4;                               // cov(roll,roll)
+  pose_msg.pose.covariance[28] = 1e-4;                               // cov(pitch,pitch)
+
+  pose_msg.pose.covariance[30] = est.covariance[6];                  // cov(yaw,x)
+  pose_msg.pose.covariance[31] = est.covariance[7];                  // cov(yaw,y)
+  pose_msg.pose.covariance[35] = std::max(1e-4, est.covariance[8]);  // cov(yaw,yaw)
 
   pose_pub_->publish(pose_msg);
   // amcl_pose_pub_->publish(pose_msg);
@@ -444,9 +468,7 @@ void MCLNode::publish_pose_and_particles(const rclcpp::Time & stamp)
 
     particlecloud_pub_->publish(cloud_msg);
   }
-
-  // Update and send TF
-  update_map_to_odom_transform(est, stamp);
+  // TF broadcast intentionally detached from publish_pose_and_particles to prevent duplicate sends
 }
 
 }  // namespace montecarlo_localization

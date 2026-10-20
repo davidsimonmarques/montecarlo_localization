@@ -28,11 +28,11 @@ void MotionModel::predict(
   double delta_rot1 = 0.0;
   double delta_rot2 = 0.0;
 
-  if (delta_trans > 1e-4) {
+  if (delta_trans > 0.005) {
     delta_rot1 = angle_diff(std::atan2(dy, dx), prev_odom.theta);
     delta_rot2 = angle_diff(curr_odom.theta, prev_odom.theta + delta_rot1);
   } else {
-    // Pure rotation
+    // Pure rotation (delta_trans <= 5mm): avoid atan2(dy, dx) on numerical noise
     delta_rot1 = 0.0;
     delta_rot2 = dtheta;
   }
