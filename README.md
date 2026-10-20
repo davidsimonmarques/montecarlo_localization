@@ -1,110 +1,103 @@
 # Monte Carlo Localization (MCL) - ROS 2
 
-Pacote ROS 2 (C++) que implementa o algoritmo de **Localização de Monte Carlo** (*Particle Filter*) para robôs móveis diferenciais utilizando leituras de LiDAR 2D e odometria sobre um mapa de grade de ocupação (*Occupancy Grid*).
+A ROS 2 (C++) package implementing the **Monte Carlo Localization** (Particle Filter) algorithm for differential drive mobile robots using 2D LiDAR scans and odometry on an occupancy grid map.
 
 ---
 
-## 📌 O que é e Como Funciona
+## Overview & Architecture
 
-O algoritmo estima probabilisticamente a pose 2D do robô $(x, y, \theta)$ no referencial do mapa (`map`), mitigando o erro acumulado da odometria (*drift*).
+The algorithm probabilistically estimates the 2D robot pose $(x, y, \theta)$ in the map frame (`map`), eliminating the cumulative drift inherent to odometry.
 
-### Pipeline de Execução:
-1. **Inicialização:**
-   * **Global (`global_localization_on_start: true`):** Partículas distribuídas uniformemente apenas pelas células livres do mapa.
-   * **Local (`auto_initialize: true`):** Partículas inicializadas com distribuição Gaussiana em torno de uma pose inicial configurada no YAML.
-   * **Interativa:** Recebe estimativas de pose a qualquer momento pelo tópico `/initialpose` (ferramenta *2D Pose Estimate* do RViz).
-2. **Predição (*Motion Model*):**
-   * A cada nova leitura de odometria (`/odom`), calcula $\delta\text{rot}_1, \delta\text{trans}, \delta\text{rot}_2$ e propaga as partículas adicionando ruído gaussiano calibrado pelos coeficientes $\alpha_1, \alpha_2, \alpha_3, \alpha_4$.
-3. **Correção (*Sensor Model - Likelihood Field*):**
-   * A cada varredura do LiDAR (`/scan`), calcula o ponto final no mundo de cada feixe válido e consulta a distância ao obstáculo mais próximo via mapa de distâncias euclidianas pré-computado.
-   * Pondera os feixes através de um modelo gaussiano de acerto ($z_{\text{hit}}, \sigma_{\text{hit}}$) combinado a um componente aleatório uniforme ($z_{\text{rand}}$).
-4. **Reamostragem (*Resampling*):**
-   * Reamostragem de baixa variância (*Low-Variance Resampling*) disparada seletivamente baseada no número efetivo de partículas ($N_{\text{eff}} < 0.75 \cdot N$).
-   * Partículas que caem fora dos limites do mapa ou dentro de obstáculos são automaticamente reamostradas para regiões livres.
-5. **Estimativa e Árvore de TF:**
-   * Agrupa a nuvem em torno da partícula de maior peso (pico de verossimilhança) para evitar erros de média aritmética em distribuições multimodais.
-   * Calcula e publica continuamente a transformada dinâmica **`map -> odom`**.
+### Execution Pipeline:
+1. **Initialization:**
+   * **Global Localization (`global_localization_on_start: true`):** Particles are uniformly distributed across free map cells only.
+   * **Gaussian Initialization (`auto_initialize: true`):** Particles are sampled from a Gaussian distribution centered at a user-configured initial pose.
+   * **Interactive:** Re-initialized at any time via `/initialpose` (e.g., using the *2D Pose Estimate* tool in RViz).
+2. **Prediction (Motion Model):**
+   * On each odometry message (`/odom`), computes incremental motion $(\delta\text{rot}_1, \delta\text{trans}, \delta\text{rot}_2)$ and propagates particles with Gaussian noise governed by coefficients $\alpha_1, \alpha_2, \alpha_3, \alpha_4$.
+3. **Correction (Sensor Model - Likelihood Field):**
+   * For each laser scan (`/scan`), projects valid beam endpoints into world coordinates and queries the distance to the nearest obstacle via a precomputed Euclidean Distance Field (EDF).
+   * Evaluates likelihood using a Gaussian obstacle hit model ($z_{\text{hit}}, \sigma_{\text{hit}}$) combined with a uniform random noise term ($z_{\text{rand}}$).
+4. **Resampling:**
+   * Employs Low-Variance Resampling triggered selectively based on the Effective Particle Count ($N_{\text{eff}} < 0.75 \cdot N$) to avoid unnecessary particle depletion.
+   * Out-of-bounds particles or particles inside obstacles are respawned in free space to prevent divergence.
+5. **Pose Estimation & TF Broadcasting:**
+   * Extracts the estimated pose from a cluster anchored at the highest-weighted particle, avoiding distortion from arithmetic averaging over multimodal distributions.
+   * Continuously computes and broadcasts the dynamic transform **`map -> odom`**.
 
 ---
 
-## 📡 Tópicos e Árvore de Transformadas (TF)
+## Topics & Transform (TF) Tree
 
-### Tópicos de Entrada (Subscriptions):
-| Tópico | Tipo de Mensagem | Descrição |
+### Subscribed Topics:
+| Topic | Message Type | Description |
 | :--- | :--- | :--- |
-| `/map` | `nav_msgs/msg/OccupancyGrid` | Mapa de ocupação do ambiente (fornecido pelo `map_server`). |
-| `/odom` | `nav_msgs/msg/Odometry` | Odometria do robô contendo posição e orientação relativa. |
-| `/scan` | `sensor_msgs/msg/LaserScan` | Varredura de distâncias do sensor LiDAR 2D. |
-| `/initialpose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | Pose inicial enviada manualmente via RViz. |
+| `/map` | `nav_msgs/msg/OccupancyGrid` | Environment occupancy grid map (provided by `map_server`). |
+| `/odom` | `nav_msgs/msg/Odometry` | Relative robot displacement and velocity from odometry. |
+| `/scan` | `sensor_msgs/msg/LaserScan` | 2D LiDAR range measurements. |
+| `/initialpose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | Initial pose estimate sent manually from RViz. |
 
-### Tópicos de Saída (Publications):
-| Tópico | Tipo de Mensagem | Descrição |
+### Published Topics:
+| Topic | Message Type | Description |
 | :--- | :--- | :--- |
-| `/mcl_pose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | Pose estimada do robô $(x, y, \theta)$ e matriz de covariância $6 \times 6$. |
-| `/particlecloud` | `geometry_msgs/msg/PoseArray` | Amostra das partículas ativas para visualização no RViz. |
+| `/mcl_pose` | `geometry_msgs/msg/PoseWithCovarianceStamped` | Estimated robot pose $(x, y, \theta)$ with $6 \times 6$ covariance. |
+| `/particlecloud` | `geometry_msgs/msg/PoseArray` | Sample of active particles for visualization in RViz. |
 
-### Transformadas (TF):
-* **Requeridas:** `odom -> base_link` (ou `odom -> base_footprint -> base_link`) e `base_link -> base_scan`.
-* **Publicada pelo nó:** **`map -> odom`**.
-
----
-
-## ⚙️ Arquivos de Parâmetros (`config/`)
-
-* **[`params.yaml`](config/params.yaml):** Configuração principal do nó de Monte Carlo para o cenário da fábrica (`map_factory`):
-  * `num_particles`: Quantidade de partículas ativas (ex: `8000`).
-  * `update_min_d`, `update_min_a`: Limiares mínimos de translação ($0.1\text{m}$) e rotação ($0.1\text{rad}$) para disparar atualização com o laser.
-  * `alpha1` a `alpha4`: Coeficientes de ruído do modelo de movimento por odometria.
-  * `z_hit`, `z_rand`, `sigma_hit`: Pesos e desvio padrão do modelo de verossimilhança do laser.
-  * `global_localization_on_start`: `true` para espalhar partículas pelo mapa ou `false` para usar a pose inicial do arquivo.
-  * `initial_pose_x`, `initial_pose_y`, `initial_pose_yaw`: Pose inicial (em metros e **radianos**).
-* **[`params_gazebo.yaml`](config/params_gazebo.yaml):** Parâmetros calibrados especificamente para o mundo de simulação do Gazebo (`map_gazebo_world`).
-* **[`amcl_params.yaml`](config/amcl_params.yaml):** Configuração oficial do `nav2_amcl` para testes comparativos de referência (*benchmark*).
+### Transform Tree (TF):
+* **Required Inputs:** `odom -> base_link` (or `odom -> base_footprint -> base_link`) and `base_link -> base_scan`.
+* **Broadcast by Node:** **`map -> odom`**.
 
 ---
 
-## 🚀 Arquivos de Launch (`launch/`)
+## Configuration Files (`config/`)
+
+* **[`params.yaml`](config/params.yaml):** Main configuration for the factory environment (`map_factory`):
+  * `num_particles`: Active particle count (e.g., `8000`).
+  * `update_min_d`, `update_min_a`: Minimum translation ($0.1\text{m}$) and rotation ($0.1\text{rad}$) thresholds required to trigger a sensor update.
+  * `alpha1` to `alpha4`: Odometry motion model noise parameters.
+  * `z_hit`, `z_rand`, `sigma_hit`: Likelihood field sensor model weights and standard deviation.
+  * `global_localization_on_start`: `true` to disperse particles globally across the map, or `false` to use the initial pose.
+  * `initial_pose_x`, `initial_pose_y`, `initial_pose_yaw`: Initial pose coordinates (in meters and **radians**).
+* **[`amcl_params.yaml`](config/amcl_params.yaml):** Nav2 AMCL parameter file for benchmarking and performance comparisons.
+
+---
+
+## Launch Files (`launch/`)
 
 * **`localization_launch.py`:**
-  Inicia o pipeline completo para o mapa da fábrica:
-  1. `nav2_map_server` carregando `maps/map_factory.yaml`;
-  2. `nav2_lifecycle_manager` para transição automática do servidor de mapa;
-  3. `montecarlo_localization_node` carregando `config/params.yaml`;
-  4. Interface RViz2 com layout pronto.
+  Launches the full localization pipeline for the factory environment:
+  1. `nav2_map_server` loading `maps/map_factory.yaml`;
+  2. `nav2_lifecycle_manager` managing lifecycle state transitions;
+  3. `montecarlo_localization_node` using `config/params.yaml`;
+  4. RViz2 with pre-configured display settings.
   ```bash
   ros2 launch montecarlo_localization localization_launch.py
   ```
 
-* **`localization_gazebo_launch.py`:**
-  Inicia a localização adaptada ao ambiente do Gazebo (`map_gazebo_world`), com `use_sim_time: true`:
-  ```bash
-  ros2 launch montecarlo_localization localization_gazebo_launch.py
-  ```
-
 * **`amcl_launch.py`:**
-  Launch auxiliar para executar o AMCL nativo do Nav2 no mesmo mapa para comparação de desempenho:
+  Runs standard Nav2 AMCL on the same factory map for side-by-side evaluation:
   ```bash
   ros2 launch montecarlo_localization amcl_launch.py
   ```
 
 ---
 
-## 🖥️ Visualização no RViz (`rviz/`)
+## RViz Visualization (`rviz/`)
 
-O arquivo **[`rviz/mcl_visualization.rviz`](rviz/mcl_visualization.rviz)** vem pré-configurado com:
+The pre-configured layout **[`rviz/mcl_visualization.rviz`](rviz/mcl_visualization.rviz)** provides:
 * **Fixed Frame:** `map`
-* **Map Display:** Tópico `/map` renderizado no plano do chão.
-* **LaserScan Display:** Tópico `/scan` colorido por intensidade ou decaimento.
-* **TF Display:** Árvore de transformadas visualizando `map`, `odom`, `base_link` e `base_scan`.
-* **Robot Pose:** Tópico `/mcl_pose` representado por uma seta vermelha indicando a pose estimada atual.
-* **Particle Cloud:** Tópico `/particlecloud` exibindo a dispersão das partículas em verde/amarelo sobre o mapa.
-* **Ground Truth (se ativo):** Tópico `/pose_ground_truth` para comparação visual imediata entre a estimativa e o valor real do simulador.
+* **Map Display:** `/map` rendered on the ground plane.
+* **LaserScan Display:** `/scan` colored by intensity or distance.
+* **TF Display:** Full coordinate frame tree (`map`, `odom`, `base_link`, `base_scan`).
+* **Robot Pose:** `/mcl_pose` depicted as an arrow showing the current estimate.
+* **Particle Cloud:** `/particlecloud` displaying the particle dispersion in real time.
+* **Ground Truth (if published):** `/pose_ground_truth` for immediate visual comparison between estimation and simulation ground truth.
 
 ---
 
-## 🛠️ Compilação e Execução
+## Build and Execution
 
-No seu workspace ROS 2:
+Inside your ROS 2 workspace:
 ```bash
 cd ~/ros2_ws
 colcon build --packages-select montecarlo_localization --symlink-install

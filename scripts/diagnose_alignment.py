@@ -83,8 +83,7 @@ def main():
     # Fallback para carregar o mapa diretamente caso o map_server não esteja ativo
     if not node.map_data:
         map_candidates = [
-            '/home/davidsimon/ros2_ws/src/montecarlo_localization/maps/map_factory.yaml',
-            '/home/davidsimon/ros2_ws/src/montecarlo_localization/maps/map_gazebo_world.yaml'
+            '/home/davidsimon/ros2_ws/src/montecarlo_localization/maps/map_factory.yaml'
         ]
         for map_yaml in map_candidates:
             if os.path.exists(map_yaml):
