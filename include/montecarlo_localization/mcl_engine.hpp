@@ -36,52 +36,60 @@ class MCLEngine
 public:
   MCLEngine();
   explicit MCLEngine(const MCLParameters & params);
-  ~MCLEngine() = default;
+  virtual ~MCLEngine() = default;
 
-  void set_parameters(const MCLParameters & params);
+  virtual void set_parameters(const MCLParameters & params);
   const MCLParameters & get_parameters() const { return params_; }
 
   /**
    * @brief Load occupancy grid map into map model
    */
-  void set_map(const nav_msgs::msg::OccupancyGrid & map, int occupied_thresh = 50, int free_thresh = 20);
+  virtual void set_map(const nav_msgs::msg::OccupancyGrid & map, int occupied_thresh = 50, int free_thresh = 20);
 
   /**
    * @brief Initialize particles around a Gaussian distribution
    */
-  void init_gaussian(
+  virtual void init_gaussian(
     double mean_x, double mean_y, double mean_yaw,
     double std_x, double std_y, double std_yaw);
 
   /**
    * @brief Initialize particles uniformly distributed across free map space
    */
-  bool init_global();
+  virtual bool init_global();
 
   /**
    * @brief Predict step: propagate particles using odometry displacement
    */
-  void predict(const Pose2D & prev_odom, const Pose2D & curr_odom);
+  virtual void predict(const Pose2D & prev_odom, const Pose2D & curr_odom);
 
   /**
    * @brief Correction step: update particle weights using LaserScan observation
    */
-  void update_sensor(const sensor_msgs::msg::LaserScan & scan);
+  virtual void update_sensor(const sensor_msgs::msg::LaserScan & scan);
+
+  /**
+   * @brief Perform one complete filter update using odometry and a laser scan
+   */
+  virtual void process_update(
+    const Pose2D & prev_odom,
+    const Pose2D & curr_odom,
+    const sensor_msgs::msg::LaserScan & scan);
 
   /**
    * @brief Resample particles
    */
-  void resample();
+  virtual void resample();
 
   /**
    * @brief Check if robot has moved enough since last update pose
    */
-  bool has_moved(const Pose2D & last_update_odom, const Pose2D & curr_odom) const;
+  virtual bool has_moved(const Pose2D & last_update_odom, const Pose2D & curr_odom) const;
 
   /**
    * @brief Compute the current best pose estimate and covariance
    */
-  PoseEstimate get_estimate() const;
+  virtual PoseEstimate get_estimate() const;
 
   /**
    * @brief Access the particle cloud
@@ -100,7 +108,7 @@ public:
   SensorModel & sensor_model() { return sensor_model_; }
   Resampler & resampler() { return resampler_; }
 
-private:
+protected:
   MCLParameters params_;
   MapModel map_model_;
   MotionModel motion_model_;

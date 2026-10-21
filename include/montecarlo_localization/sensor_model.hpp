@@ -28,12 +28,26 @@ struct SensorParameters
 class SensorModel
 {
 public:
+  struct Beam
+  {
+    double range;
+    double angle;
+  };
+
+  struct PreparedScan
+  {
+    std::vector<Beam> beams;
+    double random_density{0.0};
+    double hit_gaussian_factor{0.0};
+    double two_sigma_sq{0.0};
+  };
+
   SensorModel();
   explicit SensorModel(const SensorParameters & params);
   ~SensorModel() = default;
 
-  void set_parameters(const SensorParameters & params) { params_ = params; }
-  const SensorParameters & get_parameters() const { return params_; }
+  void set_parameters(const SensorParameters & params);
+  const SensorParameters & get_parameters() const {return params_;}
 
   void set_laser_offset(double x, double y, double yaw)
   {
@@ -53,6 +67,17 @@ public:
     std::vector<Particle> & particles,
     const sensor_msgs::msg::LaserScan & scan,
     const MapModel & map_model);
+
+  PreparedScan prepare_scan(const sensor_msgs::msg::LaserScan & scan) const;
+  double log_likelihood(
+    const Particle & particle,
+    const PreparedScan & scan,
+    const MapModel & map_model) const;
+
+  double update_weights(
+    std::vector<Particle> & particles,
+    const PreparedScan & scan,
+    const MapModel & map_model) const;
 
 private:
   SensorParameters params_;

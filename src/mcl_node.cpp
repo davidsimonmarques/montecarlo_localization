@@ -6,16 +6,27 @@ namespace montecarlo_localization
 {
 
 MCLNode::MCLNode(const rclcpp::NodeOptions & options)
-: Node("montecarlo_localization_node", options),
-  engine_{}
+: MCLNode("montecarlo_localization_node", options, true)
 {
-  declare_and_get_parameters();
+}
 
+MCLNode::MCLNode(const std::string & node_name, const rclcpp::NodeOptions & options, bool auto_init)
+: Node(node_name, options),
+  engine_{nullptr}
+{
+  if (auto_init) {
+    declare_and_get_parameters();
+    setup_node();
+  }
+}
+
+void MCLNode::setup_node()
+{
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
   tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
 
-  //Subscribers:
+  // Subscribers:
   // QoS for map subscription: transient local for latching
   rclcpp::QoS map_qos(1);
   map_qos.transient_local();
@@ -36,16 +47,16 @@ MCLNode::MCLNode(const rclcpp::NodeOptions & options)
   initial_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
     "/initialpose", 10,
     std::bind(&MCLNode::initial_pose_callback, this, std::placeholders::_1));
-  
-  //Publishers:
-  pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("/mcl_pose", 10);
-  //amcl_pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("/amcl_pose", 10);
-  particlecloud_pub_ = this->create_publisher<geometry_msgs::msg::PoseArray>("/particlecloud", 10);
+
+  // Publishers:
+  pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(pose_topic_, 10);
+  particlecloud_pub_ = this->create_publisher<geometry_msgs::msg::PoseArray>(particlecloud_topic_, 10);
 
   // TF broadcasting is handled synchronously in odom_callback and scan_callback
   // using sensor message stamps to stay synchronized with the simulation clock.
 
-  RCLCPP_INFO(this->get_logger(), "MCL Node initialized. Waiting for map on '%s'...", map_topic_.c_str());
+  RCLCPP_INFO(this->get_logger(), "%s initialized (pose: '%s', cloud: '%s'). Waiting for map on '%s'...",
+    this->get_name(), pose_topic_.c_str(), particlecloud_topic_.c_str(), map_topic_.c_str());
 }
 
 void MCLNode::declare_and_get_parameters()
@@ -59,6 +70,8 @@ void MCLNode::declare_and_get_parameters()
   this->declare_parameter<std::string>("scan_topic", "/scan");
   this->declare_parameter<std::string>("map_topic", "/map");
   this->declare_parameter<std::string>("odom_topic", "/odom");
+  this->declare_parameter<std::string>("pose_topic", "/mcl_pose");
+  this->declare_parameter<std::string>("particlecloud_topic", "/particlecloud");
 
   //TF broadcast declaration with default value:
   this->declare_parameter<bool>("publish_tf", true);
@@ -102,6 +115,8 @@ void MCLNode::declare_and_get_parameters()
   scan_topic_ = this->get_parameter("scan_topic").as_string();
   map_topic_ = this->get_parameter("map_topic").as_string();
   odom_topic_ = this->get_parameter("odom_topic").as_string();
+  pose_topic_ = this->get_parameter("pose_topic").as_string();
+  particlecloud_topic_ = this->get_parameter("particlecloud_topic").as_string();
   publish_tf_ = this->get_parameter("publish_tf").as_bool();
 
   MCLParameters params;
@@ -137,7 +152,7 @@ void MCLNode::declare_and_get_parameters()
   init_cov_y_ = this->get_parameter("initial_cov_y").as_double();
   init_cov_yaw_ = this->get_parameter("initial_cov_yaw").as_double();
 
-  engine_.set_parameters(params);
+  engine_ = std::make_unique<MCLEngine>(params);
 }
 
 void MCLNode::map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
@@ -158,17 +173,18 @@ void MCLNode::map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
   */
   // This allows the sensor model (Likelihood Field) to query in O(1) time
   // the distance from each laser beam endpoint to the nearest obstacle.
-  engine_.set_map(*msg);
+  engine_->set_map(*msg);
 
   RCLCPP_INFO(this->get_logger(), "Map distance field computed successfully.");
 
   // 2. Particle initialization (Bootstrapping):
   // If the filter is not yet initialized, initialize particles based on configured parameters.
-  if (!engine_.is_initialized()) {
+  if (!engine_->is_initialized()) {
+    bool initialized = false;
     if (global_localization_on_start_) {
       // Global localization: distribute particles uniformly across free map cells only
       RCLCPP_INFO(this->get_logger(), "Initializing particles uniformly across map free space.");
-      engine_.init_global();
+      initialized = engine_->init_global();
     } else if (auto_initialize_) {
       // Auto-initialization: generate a Gaussian distribution around the initial pose configured in YAML
       RCLCPP_INFO(
@@ -176,14 +192,22 @@ void MCLNode::map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
         "Auto-initializing particles at (x=%.2f, y=%.2f, yaw=%.2f) with std=(%.2f, %.2f, %.2f).",
         init_x_, init_y_, init_yaw_,
         std::sqrt(init_cov_x_), std::sqrt(init_cov_y_), std::sqrt(init_cov_yaw_));
-      engine_.init_gaussian(
+      engine_->init_gaussian(
         init_x_, init_y_, init_yaw_,
         std::sqrt(init_cov_x_), std::sqrt(init_cov_y_), std::sqrt(init_cov_yaw_));
+      initialized = engine_->is_initialized();
+    }
+
+    if (!initialized) {
+      RCLCPP_ERROR(
+        this->get_logger(),
+        "Particle initialization failed or is disabled; waiting for a valid initial pose.");
+      return;
     }
 
     // 3. Publish initial state immediately to /particlecloud and /mcl_pose,
     // allowing the map and particles to be visible in RViz before the robot starts moving.
-    auto est = engine_.get_estimate();
+    auto est = engine_->get_estimate();
     publish_pose_and_particles(est, this->now());
   }
 }
@@ -210,14 +234,14 @@ void MCLNode::initial_pose_callback(const geometry_msgs::msg::PoseWithCovariance
     "Setting initial pose: x=%.3f, y=%.3f, yaw=%.3f (std_x=%.3f, std_y=%.3f, std_yaw=%.3f)",
     px, py, pyaw, std_x, std_y, std_yaw);
 
-  engine_.init_gaussian(px, py, pyaw, std_x, std_y, std_yaw);
+  engine_->init_gaussian(px, py, pyaw, std_x, std_y, std_yaw);
   last_update_odom_pose_ = curr_odom_pose_;
   force_initial_update_ = true;
   scan_update_count_ = 0;
 
   rclcpp::Time stamp = (msg->header.stamp.sec == 0 && msg->header.stamp.nanosec == 0) ?
                         last_odom_stamp_ : rclcpp::Time(msg->header.stamp);
-  auto est = engine_.get_estimate();
+  auto est = engine_->get_estimate();
   publish_pose_and_particles(est, stamp);
   update_map_to_odom_transform(est, stamp);
 }
@@ -273,7 +297,7 @@ void MCLNode::update_laser_offset_from_tf(const std::string & laser_frame)
       tf_stamped.transform.rotation.z,
       tf_stamped.transform.rotation.w);
 
-    engine_.sensor_model().set_laser_offset(lx, ly, lyaw); //sets the laser offset in the sensor model
+    engine_->sensor_model().set_laser_offset(lx, ly, lyaw); //sets the laser offset in the sensor model
     laser_offset_resolved_ = true;
     RCLCPP_INFO(
       this->get_logger(),
@@ -290,11 +314,11 @@ void MCLNode::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
     update_laser_offset_from_tf(msg->header.frame_id); //finds the transform from the base frame to the laser frame
   }
 
-  if (!engine_.is_initialized() || !has_odom_) { //Only updates particles if they're already initialized and they have moved
+  if (!engine_->is_initialized() || !has_odom_) { //Only updates particles if they're already initialized and they have moved
     return;
   }
 
-  bool moved = engine_.has_moved(last_update_odom_pose_, curr_odom_pose_);
+  bool moved = engine_->has_moved(last_update_odom_pose_, curr_odom_pose_);
 
   // Determine if we should force an update even without movement:
   // After initialization, do one update to evaluate weights and publish initial pose/TF.
@@ -305,11 +329,8 @@ void MCLNode::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
   }
 
   if (moved || force) {
-    // [PREDICTION] Apply motion model with the accumulated odometry delta (Table 8.2)
-    engine_.predict(last_update_odom_pose_, curr_odom_pose_);
-
-    // [CORRECTION & RESAMPLING] Evaluate observation likelihood and resample
-    engine_.update_sensor(*msg);
+    // Apply prediction, measurement weighting, and resampling as one filter iteration.
+    engine_->process_update(last_update_odom_pose_, curr_odom_pose_, *msg);
     last_update_odom_pose_ = curr_odom_pose_;
     scan_update_count_++;
 
@@ -318,7 +339,7 @@ void MCLNode::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
       RCLCPP_INFO(this->get_logger(), "First sensor update completed. Publishing initial pose estimate.");
     }
 
-    auto est = engine_.get_estimate();
+    auto est = engine_->get_estimate();
 
     if (global_localization_on_start_ && (scan_update_count_ % 10 == 0)) {
       RCLCPP_INFO(this->get_logger(),
@@ -334,7 +355,7 @@ void MCLNode::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
     // Keep /mcl_pose and /particlecloud active at ~5 Hz even when stationary
     static int stationary_pub_counter = 0;
     if (++stationary_pub_counter % 6 == 0) {
-      publish_pose_and_particles(engine_.get_estimate(), msg->header.stamp);
+      publish_pose_and_particles(engine_->get_estimate(), msg->header.stamp);
     }
   }
 }
@@ -439,7 +460,7 @@ void MCLNode::publish_pose_and_particles(const PoseEstimate & est, const rclcpp:
   // amcl_pose_pub_->publish(pose_msg);
 
   // Publish PoseArray particles (downsampled to max 250 poses for RViz to prevent DDS socket buffer overflows)
-  const auto & particles = engine_.get_particles();
+  const auto & particles = engine_->get_particles();
   if (particlecloud_pub_->get_subscription_count() > 0 && !particles.empty()) {
     const size_t max_viz_particles = 250;
     size_t step = std::max(size_t{1}, particles.size() / max_viz_particles);

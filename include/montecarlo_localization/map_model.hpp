@@ -20,12 +20,14 @@ public:
    * @param occupied_thresh Threshold above which cell is considered an obstacle [0..100]
    * @param free_thresh Threshold below which cell is considered free [0..100]
    */
-  void set_map(const nav_msgs::msg::OccupancyGrid & map, int occupied_thresh = 50, int free_thresh = 20);
+  void set_map(
+    const nav_msgs::msg::OccupancyGrid & map, int occupied_thresh = 50,
+    int free_thresh = 20);
 
   /**
    * @brief Check if a valid map is loaded
    */
-  bool is_loaded() const { return is_loaded_; }
+  bool is_loaded() const {return is_loaded_;}
 
   /**
    * @brief Convert world coordinates (meters) to map grid coordinates (indices)
@@ -63,12 +65,12 @@ public:
   bool sample_free_space(double & wx, double & wy, std::mt19937 & rng) const;
 
   // Getters
-  double resolution() const { return resolution_; }
-  int width() const { return width_; }
-  int height() const { return height_; }
-  double origin_x() const { return origin_x_; }
-  double origin_y() const { return origin_y_; }
-  double max_distance() const { return max_distance_; }
+  double resolution() const {return resolution_;}
+  int width() const {return width_;}
+  int height() const {return height_;}
+  double origin_x() const {return origin_x_;}
+  double origin_y() const {return origin_y_;}
+  double max_distance() const {return max_distance_;}
 
 private:
   /**
@@ -82,6 +84,7 @@ private:
   double resolution_{0.05};
   double origin_x_{0.0};
   double origin_y_{0.0};
+  double origin_yaw_{0.0};
   double max_distance_{10.0};
   int occupied_thresh_{50};
   int free_thresh_{20};

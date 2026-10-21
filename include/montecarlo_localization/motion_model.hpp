@@ -23,8 +23,8 @@ public:
   explicit MotionModel(const MotionParameters & params);
   ~MotionModel() = default;
 
-  void set_parameters(const MotionParameters & params) { params_ = params; }
-  const MotionParameters & get_parameters() const { return params_; }
+  void set_parameters(const MotionParameters & params);
+  const MotionParameters & get_parameters() const {return params_;}
 
   /**
    * @brief Propagates particle state according to the odometry motion model
@@ -35,6 +35,12 @@ public:
    */
   void predict(
     std::vector<Particle> & particles,
+    const Pose2D & prev_odom,
+    const Pose2D & curr_odom,
+    std::mt19937 & rng);
+
+  void predict(
+    Particle & particle,
     const Pose2D & prev_odom,
     const Pose2D & curr_odom,
     std::mt19937 & rng);

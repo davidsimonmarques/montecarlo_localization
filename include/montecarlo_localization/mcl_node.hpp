@@ -23,23 +23,25 @@ class MCLNode : public rclcpp::Node
 {
 public:
   explicit MCLNode(const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
+  MCLNode(const std::string & node_name, const rclcpp::NodeOptions & options, bool auto_init = true);
   ~MCLNode() override = default;
 
-private:
-  void declare_and_get_parameters();
-  void map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg);
-  void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
-  void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
-  void initial_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
-  void timer_tf_callback();
+protected:
+  virtual void declare_and_get_parameters();
+  virtual void setup_node();
+  virtual void map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg);
+  virtual void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
+  virtual void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
+  virtual void initial_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
+  virtual void timer_tf_callback();
 
-  void update_laser_offset_from_tf(const std::string & laser_frame);
-  void publish_pose_and_particles(const PoseEstimate & est, const rclcpp::Time & stamp);
-  void update_map_to_odom_transform(const PoseEstimate & est, const rclcpp::Time & stamp);
-  void send_map_to_odom(const rclcpp::Time & stamp);
+  virtual void update_laser_offset_from_tf(const std::string & laser_frame);
+  virtual void publish_pose_and_particles(const PoseEstimate & est, const rclcpp::Time & stamp);
+  virtual void update_map_to_odom_transform(const PoseEstimate & est, const rclcpp::Time & stamp);
+  virtual void send_map_to_odom(const rclcpp::Time & stamp);
 
-  // Engine instance
-  MCLEngine engine_;
+  // Engine instance as unique_ptr for polymorphic dispatch (MCL or AMCL)
+  std::unique_ptr<MCLEngine> engine_;
 
   // Frame IDs
   std::string global_frame_id_{"map"};
@@ -50,6 +52,8 @@ private:
   std::string scan_topic_{"/scan"};
   std::string map_topic_{"/map"};
   std::string odom_topic_{"/odom"};
+  std::string pose_topic_{"/mcl_pose"};
+  std::string particlecloud_topic_{"/particlecloud"};
 
   // Odometry tracking
   bool has_odom_{false};
@@ -75,7 +79,6 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initial_pose_sub_;
 
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_pub_;
-  rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr amcl_pose_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr particlecloud_pub_;
 
   rclcpp::TimerBase::SharedPtr tf_timer_;

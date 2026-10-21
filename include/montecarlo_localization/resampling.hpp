@@ -1,6 +1,8 @@
 #ifndef MONTECARLO_LOCALIZATION_RESAMPLING_HPP_
 #define MONTECARLO_LOCALIZATION_RESAMPLING_HPP_
 
+#include <algorithm>
+#include <cmath>
 #include <vector>
 #include <random>
 #include "montecarlo_localization/particle.hpp"
@@ -24,7 +26,7 @@ public:
   explicit Resampler(const ResamplingParameters & params);
   ~Resampler() = default;
 
-  void set_parameters(const ResamplingParameters & params) { params_ = params; }
+  void set_parameters(const ResamplingParameters & params);
   const ResamplingParameters & get_parameters() const { return params_; }
 
   /**
@@ -41,6 +43,28 @@ public:
    * @brief Reset recovery filters to initial condition
    */
   void reset_recovery();
+
+  /**
+   * @brief Get slow exponential average of observation likelihood
+   */
+  double get_w_slow() const { return w_slow_; }
+
+  /**
+   * @brief Get fast exponential average of observation likelihood
+   */
+  double get_w_fast() const { return w_fast_; }
+
+  /**
+   * @brief Compute probability of random sample injection for Augmented MCL recovery
+   */
+  double compute_recovery_probability() const
+  {
+    if (params_.enable_recovery && w_slow_ > 0.0) {
+      const double p = std::max(0.0, 1.0 - (w_fast_ / w_slow_));
+      return std::min(p, params_.recovery_max_prob);
+    }
+    return 0.0;
+  }
 
   /**
    * @brief Perform Low-Variance Resampling with optional Augmented MCL recovery

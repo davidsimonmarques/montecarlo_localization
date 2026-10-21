@@ -4,9 +4,59 @@
 #include <random>
 #include <algorithm>
 #include <numeric>
+#include <stdexcept>
+#include <unordered_map>
 
 namespace montecarlo_localization
 {
+
+namespace
+{
+
+struct EstimateBin
+{
+  int x;
+  int y;
+  int theta;
+
+  bool operator==(const EstimateBin & other) const
+  {
+    return x == other.x && y == other.y && theta == other.theta;
+  }
+};
+
+struct EstimateBinHash
+{
+  std::size_t operator()(const EstimateBin & bin) const
+  {
+    const std::size_t x_hash = std::hash<int>{}(bin.x);
+    const std::size_t y_hash = std::hash<int>{}(bin.y);
+    const std::size_t theta_hash = std::hash<int>{}(bin.theta);
+    return x_hash ^ (y_hash << 1) ^ (theta_hash << 2);
+  }
+};
+
+EstimateBin estimate_bin(const Particle & particle)
+{
+  constexpr double xy_bin_size = 0.5;
+  constexpr int theta_bin_count = 36;
+  const double theta_bin_size = 2.0 * M_PI / theta_bin_count;
+  double positive_theta = std::fmod(
+    normalize_angle(particle.theta) + M_PI + 0.5 * theta_bin_size,
+    2.0 * M_PI);
+  if (positive_theta < 0.0) {
+    positive_theta += 2.0 * M_PI;
+  }
+
+  return {
+    static_cast<int>(std::floor(particle.x / xy_bin_size)),
+    static_cast<int>(std::floor(particle.y / xy_bin_size)),
+    std::min(
+      theta_bin_count - 1,
+      static_cast<int>(std::floor(positive_theta / theta_bin_size)))};
+}
+
+}  // namespace
 
 MCLEngine::MCLEngine()
 : params_{},
@@ -24,17 +74,25 @@ MCLEngine::MCLEngine(const MCLParameters & params)
   resampler_(params_.resample_params),
   rng_(std::random_device{}())
 {
+  if (params_.num_particles <= 0) {
+    throw std::invalid_argument("num_particles must be greater than zero");
+  }
 }
 
 void MCLEngine::set_parameters(const MCLParameters & params)
 {
+  if (params.num_particles <= 0) {
+    throw std::invalid_argument("num_particles must be greater than zero");
+  }
+  motion_model_.set_parameters(params.motion_params);
+  sensor_model_.set_parameters(params.sensor_params);
+  resampler_.set_parameters(params.resample_params);
   params_ = params;
-  motion_model_.set_parameters(params_.motion_params);
-  sensor_model_.set_parameters(params_.sensor_params);
-  resampler_.set_parameters(params_.resample_params);
 }
 
-void MCLEngine::set_map(const nav_msgs::msg::OccupancyGrid & map, int occupied_thresh, int free_thresh)
+void MCLEngine::set_map(
+  const nav_msgs::msg::OccupancyGrid & map, int occupied_thresh,
+  int free_thresh)
 {
   map_model_.set_map(map, occupied_thresh, free_thresh);
 }
@@ -111,6 +169,15 @@ void MCLEngine::update_sensor(const sensor_msgs::msg::LaserScan & scan)
   }
 }
 
+void MCLEngine::process_update(
+  const Pose2D & prev_odom,
+  const Pose2D & curr_odom,
+  const sensor_msgs::msg::LaserScan & scan)
+{
+  predict(prev_odom, curr_odom);
+  update_sensor(scan);
+}
+
 void MCLEngine::resample()
 {
   if (!is_initialized_ || particles_.empty()) {
@@ -128,7 +195,7 @@ bool MCLEngine::has_moved(const Pose2D & last_update_odom, const Pose2D & curr_o
   double dist = std::sqrt(dx * dx + dy * dy);
   double dtheta = std::abs(angle_diff(curr_odom.theta, last_update_odom.theta));
 
-  return (dist >= params_.update_min_d || dtheta >= params_.update_min_a);
+  return dist >= params_.update_min_d || dtheta >= params_.update_min_a;
 }
 
 PoseEstimate MCLEngine::get_estimate() const
@@ -140,6 +207,44 @@ PoseEstimate MCLEngine::get_estimate() const
     return est;
   }
 
+  constexpr int theta_bin_count = 36;
+  std::unordered_map<EstimateBin, double, EstimateBinHash> bin_weights;
+  bin_weights.reserve(particles_.size());
+  std::vector<EstimateBin> bin_order;
+  bin_order.reserve(particles_.size());
+  for (const auto & particle : particles_) {
+    const EstimateBin bin = estimate_bin(particle);
+    const auto result = bin_weights.try_emplace(bin, 0.0);
+    if (result.second) {
+      bin_order.push_back(bin);
+    }
+    result.first->second += std::max(0.0, particle.weight);
+  }
+
+  EstimateBin dominant_bin = estimate_bin(particles_.front());
+  double dominant_window_weight = -1.0;
+  for (const EstimateBin & candidate : bin_order) {
+    double window_weight = 0.0;
+    for (int dx = -1; dx <= 1; ++dx) {
+      for (int dy = -1; dy <= 1; ++dy) {
+        for (int dtheta = -1; dtheta <= 1; ++dtheta) {
+          const int theta = (candidate.theta + dtheta + theta_bin_count) %
+            theta_bin_count;
+          const auto neighbor = bin_weights.find(
+            {
+              candidate.x + dx, candidate.y + dy, theta});
+          if (neighbor != bin_weights.end()) {
+            window_weight += neighbor->second;
+          }
+        }
+      }
+    }
+    if (window_weight > dominant_window_weight) {
+      dominant_window_weight = window_weight;
+      dominant_bin = candidate;
+    }
+  }
+
   double mean_x = 0.0;
   double mean_y = 0.0;
   double sum_sin = 0.0;
@@ -147,6 +252,15 @@ PoseEstimate MCLEngine::get_estimate() const
   double total_weight = 0.0;
 
   for (const auto & p : particles_) {
+    const EstimateBin bin = estimate_bin(p);
+    int theta_distance = std::abs(bin.theta - dominant_bin.theta);
+    theta_distance = std::min(theta_distance, theta_bin_count - theta_distance);
+    if (std::abs(bin.x - dominant_bin.x) > 1 ||
+      std::abs(bin.y - dominant_bin.y) > 1 || theta_distance > 1)
+    {
+      continue;
+    }
+
     mean_x += p.weight * p.x;
     mean_y += p.weight * p.y;
     sum_sin += p.weight * std::sin(p.theta);
@@ -173,6 +287,15 @@ PoseEstimate MCLEngine::get_estimate() const
   double cov_yt = 0.0;
 
   for (const auto & p : particles_) {
+    const EstimateBin bin = estimate_bin(p);
+    int theta_distance = std::abs(bin.theta - dominant_bin.theta);
+    theta_distance = std::min(theta_distance, theta_bin_count - theta_distance);
+    if (std::abs(bin.x - dominant_bin.x) > 1 ||
+      std::abs(bin.y - dominant_bin.y) > 1 || theta_distance > 1)
+    {
+      continue;
+    }
+
     double dx = p.x - mean_x;
     double dy = p.y - mean_y;
     double dt = angle_diff(p.theta, mean_yaw);

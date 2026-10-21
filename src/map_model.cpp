@@ -14,13 +14,22 @@ MapModel::MapModel()
 {
 }
 
-void MapModel::set_map(const nav_msgs::msg::OccupancyGrid & map, int occupied_thresh, int free_thresh)
+void MapModel::set_map(
+  const nav_msgs::msg::OccupancyGrid & map, int occupied_thresh,
+  int free_thresh)
 {
+  is_loaded_ = false;
   width_ = static_cast<int>(map.info.width);
   height_ = static_cast<int>(map.info.height);
   resolution_ = map.info.resolution;
   origin_x_ = map.info.origin.position.x;
   origin_y_ = map.info.origin.position.y;
+  const auto & origin_rotation = map.info.origin.orientation;
+  origin_yaw_ = std::atan2(
+    2.0 * (origin_rotation.w * origin_rotation.z +
+    origin_rotation.x * origin_rotation.y),
+    1.0 - 2.0 * (origin_rotation.y * origin_rotation.y +
+    origin_rotation.z * origin_rotation.z));
   occupied_thresh_ = occupied_thresh;
   free_thresh_ = free_thresh;
 
@@ -28,7 +37,12 @@ void MapModel::set_map(const nav_msgs::msg::OccupancyGrid & map, int occupied_th
   distance_field_.assign(width_ * height_, INF_DIST);
   free_cells_.clear();
 
-  if (width_ <= 0 || height_ <= 0) {
+  if (width_ <= 0 || height_ <= 0 || occupied_thresh < 0 ||
+    occupied_thresh > 100 || free_thresh < 0 || free_thresh > 100 ||
+    free_thresh >= occupied_thresh || !std::isfinite(resolution_) ||
+    resolution_ <= 0.0 ||
+    grid_data_.size() != static_cast<size_t>(width_) * static_cast<size_t>(height_))
+  {
     is_loaded_ = false;
     return;
   }
@@ -53,20 +67,30 @@ bool MapModel::world_to_map(double wx, double wy, int & mx, int & my) const
   if (!is_loaded_) {
     return false;
   }
-  mx = static_cast<int>(std::floor((wx - origin_x_) / resolution_));
-  my = static_cast<int>(std::floor((wy - origin_y_) / resolution_));
+  const double dx = wx - origin_x_;
+  const double dy = wy - origin_y_;
+  const double cos_yaw = std::cos(origin_yaw_);
+  const double sin_yaw = std::sin(origin_yaw_);
+  const double local_x = dx * cos_yaw + dy * sin_yaw;
+  const double local_y = -dx * sin_yaw + dy * cos_yaw;
+  mx = static_cast<int>(std::floor(local_x / resolution_));
+  my = static_cast<int>(std::floor(local_y / resolution_));
   return is_valid_cell(mx, my);
 }
 
 void MapModel::map_to_world(int mx, int my, double & wx, double & wy) const
 {
-  wx = origin_x_ + (static_cast<double>(mx) + 0.5) * resolution_;
-  wy = origin_y_ + (static_cast<double>(my) + 0.5) * resolution_;
+  const double local_x = (static_cast<double>(mx) + 0.5) * resolution_;
+  const double local_y = (static_cast<double>(my) + 0.5) * resolution_;
+  const double cos_yaw = std::cos(origin_yaw_);
+  const double sin_yaw = std::sin(origin_yaw_);
+  wx = origin_x_ + local_x * cos_yaw - local_y * sin_yaw;
+  wy = origin_y_ + local_x * sin_yaw + local_y * cos_yaw;
 }
 
 bool MapModel::is_valid_cell(int mx, int my) const
 {
-  return (mx >= 0 && mx < width_ && my >= 0 && my < height_);
+  return mx >= 0 && mx < width_ && my >= 0 && my < height_;
 }
 
 bool MapModel::is_free(int mx, int my) const
@@ -75,7 +99,7 @@ bool MapModel::is_free(int mx, int my) const
     return false;
   }
   int8_t val = grid_data_[my * width_ + mx];
-  return (val >= 0 && val <= free_thresh_);
+  return val >= 0 && val <= free_thresh_;
 }
 
 bool MapModel::is_occupied(int mx, int my) const
@@ -84,7 +108,7 @@ bool MapModel::is_occupied(int mx, int my) const
     return false;
   }
   int8_t val = grid_data_[my * width_ + mx];
-  return (val >= occupied_thresh_);
+  return val >= occupied_thresh_;
 }
 
 double MapModel::get_distance_to_obstacle(double wx, double wy) const
@@ -113,8 +137,14 @@ bool MapModel::sample_free_space(double & wx, double & wy, std::mt19937 & rng) c
   const auto & cell = free_cells_[dist(rng)];
 
   std::uniform_real_distribution<double> jitter(-0.5, 0.5);
-  wx = origin_x_ + (static_cast<double>(cell.first) + 0.5 + jitter(rng)) * resolution_;
-  wy = origin_y_ + (static_cast<double>(cell.second) + 0.5 + jitter(rng)) * resolution_;
+  const double local_x =
+    (static_cast<double>(cell.first) + 0.5 + jitter(rng)) * resolution_;
+  const double local_y =
+    (static_cast<double>(cell.second) + 0.5 + jitter(rng)) * resolution_;
+  const double cos_yaw = std::cos(origin_yaw_);
+  const double sin_yaw = std::sin(origin_yaw_);
+  wx = origin_x_ + local_x * cos_yaw - local_y * sin_yaw;
+  wy = origin_y_ + local_x * sin_yaw + local_y * cos_yaw;
   return true;
 }
 
@@ -154,14 +184,23 @@ void MapModel::compute_distance_transform()
 {
   // Initialize squared distance matrix
   std::vector<float> d_sq(width_ * height_, INF_DIST);
+  bool has_obstacle = false;
 
   for (int y = 0; y < height_; ++y) {
     for (int x = 0; x < width_; ++x) {
       int idx = y * width_ + x;
       if (grid_data_[idx] >= occupied_thresh_) {
         d_sq[idx] = 0.0f;
+        has_obstacle = true;
       }
     }
+  }
+
+  if (!has_obstacle) {
+    std::fill(
+      distance_field_.begin(), distance_field_.end(),
+      static_cast<float>(max_distance_));
+    return;
   }
 
   // Transform along columns

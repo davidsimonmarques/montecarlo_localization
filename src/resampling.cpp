@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <algorithm>
+#include <stdexcept>
 
 namespace montecarlo_localization
 {
@@ -12,8 +13,23 @@ Resampler::Resampler()
 }
 
 Resampler::Resampler(const ResamplingParameters & params)
-: params_(params)
+: params_{}
 {
+  set_parameters(params);
+}
+
+void Resampler::set_parameters(const ResamplingParameters & params)
+{
+  if (!std::isfinite(params.alpha_slow) || !std::isfinite(params.alpha_fast) ||
+    params.alpha_slow < 0.0 || params.alpha_slow > 1.0 ||
+    params.alpha_fast < 0.0 || params.alpha_fast > 1.0 ||
+    params.alpha_slow > params.alpha_fast ||
+    !std::isfinite(params.recovery_max_prob) ||
+    params.recovery_max_prob < 0.0 || params.recovery_max_prob > 1.0)
+  {
+    throw std::invalid_argument("Invalid Augmented MCL recovery parameters");
+  }
+  params_ = params;
 }
 
 double Resampler::compute_neff(const std::vector<Particle> & particles) const
@@ -33,8 +49,11 @@ double Resampler::compute_neff(const std::vector<Particle> & particles) const
 
 void Resampler::update_recovery_weights(double avg_likelihood)
 {
+  if (!std::isfinite(avg_likelihood) || avg_likelihood < 0.0) {
+    avg_likelihood = 0.0;
+  }
   if (!initialized_) {
-    w_slow_ = avg_likelihood;
+    w_slow_ = avg_likelihood > 0.0 ? avg_likelihood : 1.0;
     w_fast_ = avg_likelihood;
     initialized_ = true;
     return;
@@ -65,12 +84,15 @@ void Resampler::resample(
   out_particles.clear();
   out_particles.resize(m_count);
 
-  // Compute kidnapping random injection probability
-  double p_rand = 0.0;
-  if (params_.enable_recovery && w_slow_ > 1e-9) {
-    p_rand = std::max(0.0, 1.0 - (w_fast_ / w_slow_));
-    p_rand = std::min(p_rand, params_.recovery_max_prob);
+  double total_weight = 0.0;
+  for (const auto & particle : in_particles) {
+    total_weight += std::max(0.0, particle.weight);
   }
+  const bool use_uniform_weights = !std::isfinite(total_weight) || total_weight <= 0.0;
+  if (use_uniform_weights) {
+    total_weight = static_cast<double>(m_count);
+  }
+  const double p_rand = compute_recovery_probability();
 
   // Low-variance sampling algorithm
   std::uniform_real_distribution<double> dist_u(0.0, 1.0 / static_cast<double>(m_count));
@@ -78,7 +100,9 @@ void Resampler::resample(
   std::uniform_real_distribution<double> dist_yaw(-M_PI, M_PI);
 
   double r = dist_u(rng);
-  double c = in_particles[0].weight;
+  double c = use_uniform_weights ?
+    1.0 / static_cast<double>(m_count) :
+    std::max(0.0, in_particles[0].weight) / total_weight;
   size_t i = 0;
   double inv_m = 1.0 / static_cast<double>(m_count);
 
@@ -93,9 +117,11 @@ void Resampler::resample(
     }
 
     double u = r + static_cast<double>(m) * inv_m;
-    while (u > c && i < m_count - 1) {
+    while (u >= c && i < m_count - 1) {
       ++i;
-      c += in_particles[i].weight;
+      c += use_uniform_weights ?
+        1.0 / static_cast<double>(m_count) :
+        std::max(0.0, in_particles[i].weight) / total_weight;
     }
 
     out_particles[m] = in_particles[i];

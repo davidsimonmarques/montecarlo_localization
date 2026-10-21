@@ -35,11 +35,11 @@ montecarlo_localization_node:
     # sigma_hit: desvio padrao do modelo gaussiano de acerto (metros)
     z_hit: 0.85
     z_rand: 0.15
-    sigma_hit: 0.15
+    sigma_hit: 0.25
     min_range: 0.1
     max_range: 5.0
     beam_skip: 2              # Subamostragem de feixes do laser
-    max_beams: 100            # Maximo de feixes processados por scan
+    max_beams: 30            # Maximo de feixes processados por scan
 
     # Augmented MCL (Recuperacao de sequestro do robo / perda de localizacao)
     enable_recovery: false

@@ -26,7 +26,9 @@ add_library(montecarlo_localization_core SHARED
   src/sensor_model.cpp
   src/resampling.cpp
   src/mcl_engine.cpp
+  src/amcl_engine.cpp
   src/mcl_node.cpp
+  src/amcl_node.cpp
 )
 
 target_include_directories(montecarlo_localization_core PUBLIC
@@ -44,7 +46,7 @@ ament_target_dependencies(montecarlo_localization_core
   tf2_geometry_msgs
 )
 
-# Executable Node
+# Executable Node: Classical MCL
 add_executable(montecarlo_localization_node
   src/main.cpp
 )
@@ -54,6 +56,19 @@ target_link_libraries(montecarlo_localization_node
 )
 
 ament_target_dependencies(montecarlo_localization_node
+  rclcpp
+)
+
+# Executable Node: Adaptive MCL (AMCL)
+add_executable(amcl_node
+  src/amcl_main.cpp
+)
+
+target_link_libraries(amcl_node
+  montecarlo_localization_core
+)
+
+ament_target_dependencies(amcl_node
   rclcpp
 )
 
@@ -69,7 +84,7 @@ ament_target_dependencies(goal_relay_node
 
 # Install targets and directories
 install(
-  TARGETS montecarlo_localization_core montecarlo_localization_node goal_relay_node
+  TARGETS montecarlo_localization_core montecarlo_localization_node amcl_node goal_relay_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}
