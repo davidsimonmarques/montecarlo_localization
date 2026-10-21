@@ -27,8 +27,12 @@ add_library(montecarlo_localization_core SHARED
   src/resampling.cpp
   src/mcl_engine.cpp
   src/amcl_engine.cpp
+  src/mhmcl_engine.cpp
+  src/mhamcl_engine.cpp
   src/mcl_node.cpp
   src/amcl_node.cpp
+  src/mhmcl_node.cpp
+  src/mhamcl_node.cpp
 )
 
 target_include_directories(montecarlo_localization_core PUBLIC
@@ -72,6 +76,32 @@ ament_target_dependencies(amcl_node
   rclcpp
 )
 
+# Executable Node: Metropolis-Hastings MCL (MH-MCL)
+add_executable(mhmcl_node
+  src/mhmcl_main.cpp
+)
+
+target_link_libraries(mhmcl_node
+  montecarlo_localization_core
+)
+
+ament_target_dependencies(mhmcl_node
+  rclcpp
+)
+
+# Executable Node: Metropolis-Hastings AMCL (MH-AMCL)
+add_executable(mhamcl_node
+  src/mhamcl_main.cpp
+)
+
+target_link_libraries(mhamcl_node
+  montecarlo_localization_core
+)
+
+ament_target_dependencies(mhamcl_node
+  rclcpp
+)
+
 # Goal Relay Node (bridges RViz /goal_pose to /goal_position)
 add_executable(goal_relay_node
   src/goal_relay.cpp
@@ -84,7 +114,13 @@ ament_target_dependencies(goal_relay_node
 
 # Install targets and directories
 install(
-  TARGETS montecarlo_localization_core montecarlo_localization_node amcl_node goal_relay_node
+  TARGETS
+    montecarlo_localization_core
+    montecarlo_localization_node
+    amcl_node
+    mhmcl_node
+    mhamcl_node
+    goal_relay_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}

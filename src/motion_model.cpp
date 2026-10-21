@@ -32,7 +32,7 @@ OdometryDelta make_odometry_delta(
 
   double rot1 = 0.0;
   double rot2 = 0.0;
-  if (translation > 1e-9) {
+  if (translation > 0.01) {
     rot1 = angle_diff(std::atan2(dy, dx), prev_odom.theta);
     rot2 = angle_diff(delta_theta, rot1);
   } else {
