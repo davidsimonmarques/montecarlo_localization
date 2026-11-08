@@ -111,3 +111,11 @@ colcon build --packages-select montecarlo_localization --symlink-install
 source install/setup.bash
 ros2 launch montecarlo_localization localization_launch.py
 ```
+
+### Automated experiments
+
+The automated experiment runner assigns a new random seed to each experiment and
+passes that same seed to MCL, AMCL, MH-MCL, and MH-AMCL. The seed is printed in
+the experiment log and final report. To run the localization launch directly
+with a shared seed, pass `random_seed:=<integer>`; the default `-1` retains
+random-device initialization.

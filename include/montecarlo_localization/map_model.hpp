@@ -64,6 +64,24 @@ public:
    */
   bool sample_free_space(double & wx, double & wy, std::mt19937 & rng) const;
 
+  /**
+   * @brief Check if world coordinates fall within valid map boundaries
+   */
+  bool is_in_bounds(double wx, double wy) const
+  {
+    int mx = 0, my = 0;
+    return world_to_map(wx, wy, mx, my);
+  }
+
+  /**
+   * @brief Check if world coordinates fall on free space within map boundaries
+   */
+  bool is_free_position(double wx, double wy) const
+  {
+    int mx = 0, my = 0;
+    return world_to_map(wx, wy, mx, my) && is_free(mx, my);
+  }
+
   // Getters
   double resolution() const {return resolution_;}
   int width() const {return width_;}

@@ -185,8 +185,48 @@ void AMCLEngine::process_update(
     return;
   }
 
+  update_count_++;
+
+  // In AMCL, the KLD loop itself draws particles proportionally to parent weights (resampling).
+  // If selective_resampling or resample_interval indicates we should skip resampling,
+  // we do a standard motion propagation and sensor weight update without altering the particle count/poses.
+  bool should_kld_resample = params_.resample_on_update &&
+    (params_.resample_interval <= 1 || (update_count_ % params_.resample_interval == 0));
+
+  if (should_kld_resample && params_.selective_resampling) {
+    const double n_eff = resampler_.compute_neff(particles_);
+    const double threshold =
+      params_.resample_threshold_ratio * static_cast<double>(particles_.size());
+    if (n_eff >= threshold) {
+      should_kld_resample = false;
+    }
+  }
+
   const SensorModel::PreparedScan prepared_scan = sensor_model_.prepare_scan(scan);
+
+  if (!should_kld_resample) {
+    const std::vector<Particle> old_particles = particles_;
+    motion_model_.predict(particles_, prev_odom, curr_odom, rng_);
+    if (map_model_.is_loaded()) {
+      for (size_t i = 0; i < particles_.size(); ++i) {
+        if (!map_model_.is_in_bounds(particles_[i].x, particles_[i].y)) {
+          particles_[i].x = old_particles[i].x;
+          particles_[i].y = old_particles[i].y;
+          particles_[i].theta = old_particles[i].theta;
+        }
+      }
+    }
+    const double avg_likelihood =
+      sensor_model_.update_weights(particles_, prepared_scan, map_model_);
+    resampler_.update_recovery_weights(avg_likelihood);
+    return;
+  }
+
+  // --- CANONICAL DIETER FOX KLD-SAMPLING WITH AUGMENTED MCL RECOVERY ---
   const std::vector<double> parent_cdf = make_cdf(particles_);
+  const double p_rand = amcl_params_.resample_params.enable_recovery ?
+    resampler_.compute_recovery_probability() : 0.0;
+
   const double resolution_x = amcl_params_.spatial_resolution_x;
   const double resolution_y = amcl_params_.spatial_resolution_y;
   const double resolution_theta = amcl_params_.spatial_resolution_theta;
@@ -198,9 +238,37 @@ void AMCLEngine::process_update(
   std::unordered_set<SpatialBinKey, SpatialBinHash> occupied_bins;
   double required_count = static_cast<double>(amcl_params_.max_particles);
 
+  std::uniform_real_distribution<double> dist_u(0.0, 1.0);
+  std::uniform_real_distribution<double> dist_yaw(-M_PI, M_PI);
+
   while (static_cast<int>(generated_particles.size()) < amcl_params_.max_particles) {
-    Particle sample = particles_[draw_index(parent_cdf, rng_)];
-    motion_model_.predict(sample, prev_odom, curr_odom, rng_);
+    Particle sample;
+
+    // Augmented MCL Recovery: inject random samples directly in KLD loop (Fox 2001/2003)
+    if (p_rand > 0.0 && dist_u(rng_) < p_rand) {
+      double rx = 0.0, ry = 0.0;
+      if (map_model_.sample_free_space(rx, ry, rng_)) {
+        sample = Particle(rx, ry, dist_yaw(rng_), 1.0);
+      } else {
+        const size_t parent_idx = draw_index(parent_cdf, rng_);
+        sample = particles_[parent_idx];
+        motion_model_.predict(sample, prev_odom, curr_odom, rng_);
+      }
+    } else {
+      const size_t parent_idx = draw_index(parent_cdf, rng_);
+      sample = particles_[parent_idx];
+      motion_model_.predict(sample, prev_odom, curr_odom, rng_);
+    }
+
+    if (map_model_.is_loaded() && !map_model_.is_in_bounds(sample.x, sample.y)) {
+      double rx = 0.0, ry = 0.0;
+      if (map_model_.sample_free_space(rx, ry, rng_)) {
+        sample.x = rx;
+        sample.y = ry;
+        sample.theta = dist_yaw(rng_);
+      }
+    }
+
     const double log_likelihood =
       sensor_model_.log_likelihood(sample, prepared_scan, map_model_);
     generated_particles.push_back(sample);
@@ -221,6 +289,7 @@ void AMCLEngine::process_update(
     }
   }
 
+  // Normalize particle weights using log-sum-exp
   double max_log_likelihood = -std::numeric_limits<double>::infinity();
   for (const double log_likelihood : log_likelihoods) {
     max_log_likelihood = std::max(max_log_likelihood, log_likelihood);
@@ -250,24 +319,16 @@ void AMCLEngine::process_update(
         std::exp(log_likelihoods[i] - log_normalizer) : 0.0;
     }
   } else {
-    const double uniform_weight = 1.0 / generated_particles.size();
+    const double uniform_weight = 1.0 / static_cast<double>(generated_particles.size());
     for (auto & particle : generated_particles) {
       particle.weight = uniform_weight;
     }
   }
 
   resampler_.update_recovery_weights(average_likelihood);
-  const bool recovery_needed =
-    amcl_params_.resample_params.enable_recovery &&
-    resampler_.compute_recovery_probability() > 0.0;
-  if (params_.resample_on_update || recovery_needed) {
-    std::vector<Particle> resampled_particles;
-    resampler_.resample(
-      generated_particles, resampled_particles, map_model_, rng_);
-    particles_ = std::move(resampled_particles);
-  } else {
-    particles_ = std::move(generated_particles);
-  }
+
+  // Directly assign generated particles: the KLD loop is the sole resampling step
+  particles_ = std::move(generated_particles);
 }
 
 void AMCLEngine::update_sensor(const sensor_msgs::msg::LaserScan & scan)
@@ -282,6 +343,9 @@ void AMCLEngine::resample()
   }
 
   const std::vector<double> cdf = make_cdf(particles_);
+  const double p_rand = amcl_params_.resample_params.enable_recovery ?
+    resampler_.compute_recovery_probability() : 0.0;
+
   const double resolution_x = amcl_params_.spatial_resolution_x;
   const double resolution_y = amcl_params_.spatial_resolution_y;
   const double resolution_theta = amcl_params_.spatial_resolution_theta;
@@ -291,8 +355,31 @@ void AMCLEngine::resample()
   std::unordered_set<SpatialBinKey, SpatialBinHash> occupied_bins;
   double required_count = static_cast<double>(amcl_params_.max_particles);
 
+  std::uniform_real_distribution<double> dist_u(0.0, 1.0);
+  std::uniform_real_distribution<double> dist_yaw(-M_PI, M_PI);
+
   while (static_cast<int>(resampled_particles.size()) < amcl_params_.max_particles) {
-    Particle sample = particles_[draw_index(cdf, rng_)];
+    Particle sample;
+    if (p_rand > 0.0 && dist_u(rng_) < p_rand && map_model_.is_loaded()) {
+      double rx = 0.0, ry = 0.0;
+      if (map_model_.sample_free_space(rx, ry, rng_)) {
+        sample = Particle(rx, ry, dist_yaw(rng_), 1.0);
+      } else {
+        sample = particles_[draw_index(cdf, rng_)];
+      }
+    } else {
+      sample = particles_[draw_index(cdf, rng_)];
+    }
+
+    if (map_model_.is_loaded() && !map_model_.is_in_bounds(sample.x, sample.y)) {
+      double rx = 0.0, ry = 0.0;
+      if (map_model_.sample_free_space(rx, ry, rng_)) {
+        sample.x = rx;
+        sample.y = ry;
+        sample.theta = dist_yaw(rng_);
+      }
+    }
+
     resampled_particles.push_back(sample);
     occupied_bins.insert(make_bin(sample, resolution_x, resolution_y, resolution_theta));
 
@@ -308,15 +395,9 @@ void AMCLEngine::resample()
     }
   }
 
-  const double uniform_weight = 1.0 / resampled_particles.size();
+  const double uniform_weight = 1.0 / static_cast<double>(resampled_particles.size());
   for (auto & particle : resampled_particles) {
     particle.weight = uniform_weight;
-  }
-  if (amcl_params_.resample_params.enable_recovery) {
-    std::vector<Particle> augmented_particles;
-    resampler_.resample(
-      resampled_particles, augmented_particles, map_model_, rng_);
-    resampled_particles = std::move(augmented_particles);
   }
   particles_ = std::move(resampled_particles);
 }

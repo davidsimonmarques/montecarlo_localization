@@ -4,6 +4,7 @@
 #include <vector>
 #include <random>
 #include <array>
+#include <cstdint>
 #include "montecarlo_localization/particle.hpp"
 #include "montecarlo_localization/map_model.hpp"
 #include "montecarlo_localization/motion_model.hpp"
@@ -19,6 +20,9 @@ struct MCLParameters
   double update_min_d{0.1};      // Minimum translational movement to trigger scan update (meters)
   double update_min_a{0.1};      // Minimum angular movement to trigger scan update (radians)
   bool resample_on_update{true}; // Resample immediately after each scan update
+  int resample_interval{1};      // Number of scan updates between resamplings (default 1)
+  bool selective_resampling{true}; // Resample only when Neff < num_particles * resample_threshold_ratio
+  double resample_threshold_ratio{0.5}; // Threshold ratio for Neff (Neff < ratio * N triggers resampling)
 
   MotionParameters motion_params;
   SensorParameters sensor_params;
@@ -39,6 +43,7 @@ public:
   virtual ~MCLEngine() = default;
 
   virtual void set_parameters(const MCLParameters & params);
+  void set_random_seed(std::int64_t seed);
   const MCLParameters & get_parameters() const { return params_; }
 
   /**
@@ -117,6 +122,7 @@ protected:
 
   std::vector<Particle> particles_;
   bool is_initialized_{false};
+  int update_count_{0};
   std::mt19937 rng_;
 };
 

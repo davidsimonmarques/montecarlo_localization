@@ -77,10 +77,14 @@ void MCLNode::declare_and_get_parameters()
   this->declare_parameter<bool>("publish_tf", true);
 
   //Particle filter parameters with default values:
+  this->declare_parameter<std::int64_t>("random_seed", -1);
   this->declare_parameter<int>("num_particles", 500);
   this->declare_parameter<double>("update_min_d", 0.1);
   this->declare_parameter<double>("update_min_a", 0.1);
   this->declare_parameter<bool>("resample_on_update", true);
+  this->declare_parameter<int>("resample_interval", 1);
+  this->declare_parameter<bool>("selective_resampling", true);
+  this->declare_parameter<double>("resample_threshold_ratio", 0.5);
 
   this->declare_parameter<double>("alpha1", 0.05);
   this->declare_parameter<double>("alpha2", 0.05);
@@ -124,6 +128,9 @@ void MCLNode::declare_and_get_parameters()
   params.update_min_d = this->get_parameter("update_min_d").as_double();
   params.update_min_a = this->get_parameter("update_min_a").as_double();
   params.resample_on_update = this->get_parameter("resample_on_update").as_bool();
+  params.resample_interval = this->get_parameter("resample_interval").as_int();
+  params.selective_resampling = this->get_parameter("selective_resampling").as_bool();
+  params.resample_threshold_ratio = this->get_parameter("resample_threshold_ratio").as_double();
 
   params.motion_params.alpha1 = this->get_parameter("alpha1").as_double();
   params.motion_params.alpha2 = this->get_parameter("alpha2").as_double();
@@ -153,6 +160,10 @@ void MCLNode::declare_and_get_parameters()
   init_cov_yaw_ = this->get_parameter("initial_cov_yaw").as_double();
 
   engine_ = std::make_unique<MCLEngine>(params);
+  const auto random_seed = this->get_parameter("random_seed").as_int();
+  if (random_seed != -1) {
+    engine_->set_random_seed(random_seed);
+  }
 }
 
 void MCLNode::map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)

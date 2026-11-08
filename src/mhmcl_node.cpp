@@ -26,12 +26,16 @@ void MHMCLNode::declare_and_get_parameters()
 
   // TF Publishing
   this->declare_parameter<bool>("publish_tf", true);
+  this->declare_parameter<std::int64_t>("random_seed", -1);
 
   // Filter Particle Parameters
   this->declare_parameter<int>("num_particles", 8000);
   this->declare_parameter<double>("update_min_d", 0.1);
   this->declare_parameter<double>("update_min_a", 0.1);
   this->declare_parameter<bool>("resample_on_update", true);
+  this->declare_parameter<int>("resample_interval", 1);
+  this->declare_parameter<bool>("selective_resampling", true);
+  this->declare_parameter<double>("resample_threshold_ratio", 0.5);
 
   // Odometry Motion Model Noise Parameters
   this->declare_parameter<double>("alpha1", 0.02);
@@ -80,6 +84,9 @@ void MHMCLNode::declare_and_get_parameters()
   params.update_min_d = this->get_parameter("update_min_d").as_double();
   params.update_min_a = this->get_parameter("update_min_a").as_double();
   params.resample_on_update = this->get_parameter("resample_on_update").as_bool();
+  params.resample_interval = this->get_parameter("resample_interval").as_int();
+  params.selective_resampling = this->get_parameter("selective_resampling").as_bool();
+  params.resample_threshold_ratio = this->get_parameter("resample_threshold_ratio").as_double();
 
   params.motion_params.alpha1 = this->get_parameter("alpha1").as_double();
   params.motion_params.alpha2 = this->get_parameter("alpha2").as_double();
@@ -110,6 +117,10 @@ void MHMCLNode::declare_and_get_parameters()
 
   // Instantiate MHMCLEngine
   engine_ = std::make_unique<MHMCLEngine>(params);
+  const auto random_seed = this->get_parameter("random_seed").as_int();
+  if (random_seed != -1) {
+    engine_->set_random_seed(random_seed);
+  }
 }
 
 }  // namespace montecarlo_localization

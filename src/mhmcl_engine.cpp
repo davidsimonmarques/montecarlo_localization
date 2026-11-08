@@ -30,8 +30,21 @@ void MHMCLEngine::process_update(
   const SensorModel::PreparedScan prepared_scan = sensor_model_.prepare_scan(scan);
   const double avg_likelihood = apply_metropolis_hastings(prev_odom, curr_odom, prepared_scan);
   resampler_.update_recovery_weights(avg_likelihood);
+  update_count_++;
 
-  if (params_.resample_on_update) {
+  bool should_resample = params_.resample_on_update &&
+    (params_.resample_interval <= 1 || (update_count_ % params_.resample_interval == 0));
+
+  if (should_resample && params_.selective_resampling) {
+    const double n_eff = resampler_.compute_neff(particles_);
+    const double threshold =
+      params_.resample_threshold_ratio * static_cast<double>(particles_.size());
+    if (n_eff >= threshold) {
+      should_resample = false;
+    }
+  }
+
+  if (should_resample) {
     resample();
   }
 }

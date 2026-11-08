@@ -132,8 +132,13 @@ install(
 )
 
 install(
-  DIRECTORY launch config maps rviz
+  DIRECTORY launch config maps rviz scripts
   DESTINATION share/${PROJECT_NAME}
+)
+
+install(PROGRAMS
+  scripts/run_automated_experiments.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 ament_export_include_directories(include)

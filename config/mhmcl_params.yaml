@@ -17,10 +17,13 @@ mhmcl_node:
     publish_tf: true
 
     # Filter Particle Parameters
-    num_particles: 8000
-    update_min_d: 0.1         # Minimum translation to trigger update (meters)
-    update_min_a: 0.1         # Minimum rotation to trigger update (radians)
+    num_particles: 12000
+    update_min_d: 0.05         # Minimum translation to trigger update (meters)
+    update_min_a: 0.05         # Minimum rotation to trigger update (radians)
     resample_on_update: true  # Resample immediately after observation update
+    resample_interval: 1      # Number of scan updates between resamplings
+    selective_resampling: true # Only resample when Neff < N * resample_threshold_ratio
+    resample_threshold_ratio: 0.5 # Threshold ratio for Neff (Neff < N/2)
 
     # Odometry Motion Model Noise Parameters (alpha1 - alpha4)
     alpha1: 0.02
@@ -34,11 +37,11 @@ mhmcl_node:
     sigma_hit: 0.25
     min_range: 0.1
     max_range: 5.0
-    beam_skip: 2
-    max_beams: 30
+    beam_skip: 1
+    max_beams: 60
 
     # MH-MCL uses Simple Resampling (Algorithm 3, lines 19-20 of Villela et al. 2025)
-    enable_recovery: false
+    enable_recovery: true
     alpha_slow: 0.001
     alpha_fast: 0.1
     recovery_max_prob: 0.2

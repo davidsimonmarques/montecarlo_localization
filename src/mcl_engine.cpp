@@ -3,6 +3,7 @@
 #include <cmath>
 #include <random>
 #include <algorithm>
+#include <limits>
 #include <numeric>
 #include <stdexcept>
 #include <unordered_map>
@@ -90,6 +91,17 @@ void MCLEngine::set_parameters(const MCLParameters & params)
   params_ = params;
 }
 
+void MCLEngine::set_random_seed(std::int64_t seed)
+{
+  if (seed < 0 ||
+    static_cast<std::uint64_t>(seed) >
+    static_cast<std::uint64_t>(std::numeric_limits<std::mt19937::result_type>::max()))
+  {
+    throw std::invalid_argument("random_seed must fit in the mt19937 seed range");
+  }
+  rng_.seed(static_cast<std::mt19937::result_type>(seed));
+}
+
 void MCLEngine::set_map(
   const nav_msgs::msg::OccupancyGrid & map, int occupied_thresh,
   int free_thresh)
@@ -114,10 +126,29 @@ void MCLEngine::init_gaussian(
     double px = dist_x(rng_);
     double py = dist_y(rng_);
     double pyaw = normalize_angle(dist_yaw(rng_));
+
+    if (map_model_.is_loaded()) {
+      int attempts = 0;
+      while (!map_model_.is_in_bounds(px, py) && attempts < 100) {
+        px = dist_x(rng_);
+        py = dist_y(rng_);
+        attempts++;
+      }
+      if (!map_model_.is_in_bounds(px, py)) {
+        if (map_model_.is_in_bounds(mean_x, mean_y)) {
+          px = mean_x;
+          py = mean_y;
+        } else {
+          map_model_.sample_free_space(px, py, rng_);
+        }
+      }
+    }
+
     particles_.emplace_back(px, py, pyaw, initial_weight);
   }
 
   resampler_.reset_recovery();
+  update_count_ = 0;
   is_initialized_ = true;
 }
 
@@ -143,6 +174,7 @@ bool MCLEngine::init_global()
   }
 
   resampler_.reset_recovery();
+  update_count_ = 0;
   is_initialized_ = true;
   return true;
 }
@@ -152,7 +184,17 @@ void MCLEngine::predict(const Pose2D & prev_odom, const Pose2D & curr_odom)
   if (!is_initialized_ || particles_.empty()) {
     return;
   }
+  const std::vector<Particle> old_particles = particles_;
   motion_model_.predict(particles_, prev_odom, curr_odom, rng_);
+  if (map_model_.is_loaded()) {
+    for (size_t i = 0; i < particles_.size(); ++i) {
+      if (!map_model_.is_in_bounds(particles_[i].x, particles_[i].y)) {
+        particles_[i].x = old_particles[i].x;
+        particles_[i].y = old_particles[i].y;
+        particles_[i].theta = old_particles[i].theta;
+      }
+    }
+  }
 }
 
 void MCLEngine::update_sensor(const sensor_msgs::msg::LaserScan & scan)
@@ -164,7 +206,21 @@ void MCLEngine::update_sensor(const sensor_msgs::msg::LaserScan & scan)
   double avg_likelihood = sensor_model_.update_weights(particles_, scan, map_model_);
   resampler_.update_recovery_weights(avg_likelihood);
 
-  if (params_.resample_on_update) {
+  update_count_++;
+
+  bool should_resample = params_.resample_on_update &&
+    (params_.resample_interval <= 1 || (update_count_ % params_.resample_interval == 0));
+
+  if (should_resample && params_.selective_resampling) {
+    const double n_eff = resampler_.compute_neff(particles_);
+    const double threshold =
+      params_.resample_threshold_ratio * static_cast<double>(particles_.size());
+    if (n_eff >= threshold) {
+      should_resample = false;
+    }
+  }
+
+  if (should_resample) {
     resample();
   }
 }

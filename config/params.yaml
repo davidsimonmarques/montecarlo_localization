@@ -14,10 +14,13 @@ montecarlo_localization_node:
     publish_tf: true
 
     # Filter Particle Parameters
-    num_particles: 8000
-    update_min_d: 0.1         # Metros minimos para disparar update com laser
-    update_min_a: 0.1         # Radianos minimos para disparar update com laser
-    resample_on_update: true  # Reamostrar imediatamente apos update do sensor
+    num_particles: 12000
+    update_min_d: 0.05         # Metros minimos para disparar update com laser
+    update_min_a: 0.05         # Radianos minimos para disparar update com laser
+    resample_on_update: true  # Permite reamostragem durante as atualizacoes do sensor
+    resample_interval: 1     # Intervalo de updates entre reamostragens (1 = toda atualizacao elegivel)
+    selective_resampling: true # Reamostragem seletiva: so reamostra se Neff < N * resample_threshold_ratio
+    resample_threshold_ratio: 0.5 # Limiar pratico de Neff recomendado na literatura (Thrun et al.: Neff < N/2)
 
     # Odometry Motion Model Noise Parameters (alpha1 - alpha4)
     # alpha1: ruido de rotacao resultante de rotacao
@@ -38,11 +41,11 @@ montecarlo_localization_node:
     sigma_hit: 0.25
     min_range: 0.1
     max_range: 5.0
-    beam_skip: 2              # Subamostragem de feixes do laser
-    max_beams: 30            # Maximo de feixes processados por scan
+    beam_skip: 1              # Subamostragem de feixes do laser
+    max_beams: 60            # Maximo de feixes processados por scan
 
     # Augmented MCL (Recuperacao de sequestro do robo / perda de localizacao)
-    enable_recovery: false
+    enable_recovery: true
     alpha_slow: 0.001         # Taxa de decaimento da media lenta de verossimilhanca
     alpha_fast: 0.1           # Taxa de decaimento da media rapida de verossimilhanca
     recovery_max_prob: 0.2    # Limite maximo de probabilidade de injecao de particulas aleatorias

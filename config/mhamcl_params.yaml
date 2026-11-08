@@ -17,17 +17,20 @@ mhamcl_node:
     publish_tf: true
 
     # KLD-Sampling Adaptive Particle Parameters (Dieter Fox / Villela et al. 2025)
-    min_particles: 500
-    max_particles: 5000
+    min_particles: 3000
+    max_particles: 12000
     kld_err: 0.05              # Max error bound epsilon
     kld_z: 2.32635             # Standard normal quantile (0.99 confidence)
     spatial_resolution_x: 0.5  # Bin size in X (meters)
     spatial_resolution_y: 0.5  # Bin size in Y (meters)
-    spatial_resolution_theta: 0.17453 # Bin size in Theta (radians, ~10 degrees)
+    spatial_resolution_theta: 0.087 # Bin size in Theta (radians, ~10 degrees)
 
-    update_min_d: 0.1          # Minimum translation to trigger update (meters)
-    update_min_a: 0.1          # Minimum rotation to trigger update (radians)
+    update_min_d: 0.05          # Minimum translation to trigger update (meters)
+    update_min_a: 0.05          # Minimum rotation to trigger update (radians)
     resample_on_update: true   # Resample immediately after observation update
+    resample_interval: 1       # Number of scan updates between resamplings
+    selective_resampling: true # Only resample when Neff < N * resample_threshold_ratio
+    resample_threshold_ratio: 0.5 # Threshold ratio for Neff (Neff < N/2)
 
     # Odometry Motion Model Noise Parameters (alpha1 - alpha4)
     alpha1: 0.02
@@ -41,8 +44,8 @@ mhamcl_node:
     sigma_hit: 0.25
     min_range: 0.1
     max_range: 5.0
-    beam_skip: 2
-    max_beams: 30
+    beam_skip: 1
+    max_beams: 60
 
     # MH-AMCL uses Mixed Resampling with recovery (Algorithm 3, lines 21-22 of Villela et al. 2025)
     enable_recovery: true      # Active in MH-AMCL

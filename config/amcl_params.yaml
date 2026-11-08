@@ -20,17 +20,20 @@ amcl_node:
     # KLD-Sampling Adaptive Particle Filter Parameters (Dieter Fox 2001/2003)
     # The number of particles dynamically adapts between min_particles and max_particles
     # according to the spatial dispersion (occupied bins) and statistical error bounds.
-    min_particles: 500
-    max_particles: 5000
+    min_particles: 3000
+    max_particles: 12000
     kld_err: 0.05              # Max error epsilon between true distribution and particle distribution
     kld_z: 2.32635             # Standard normal quantile for 1 - delta (0.99 confidence)
     spatial_resolution_x: 0.5  # Bin resolution in X (meters)
     spatial_resolution_y: 0.5  # Bin resolution in Y (meters)
-    spatial_resolution_theta: 0.17453 # Bin resolution in Theta (radians, ~10 degrees)
+    spatial_resolution_theta: 0.087 #0.17453 # Bin resolution in Theta (radians, ~10 degrees)
 
-    update_min_d: 0.1          # Minimum translational movement to trigger scan update (meters)
-    update_min_a: 0.1          # Minimum angular movement to trigger scan update (radians)
+    update_min_d: 0.05          # Minimum translational movement to trigger scan update (meters)
+    update_min_a: 0.05          # Minimum angular movement to trigger scan update (radians)
     resample_on_update: true   # Resample immediately after each sensor update
+    resample_interval: 1       # Number of scan updates between resamplings
+    selective_resampling: true # Only resample when Neff < N * resample_threshold_ratio
+    resample_threshold_ratio: 0.5 # Threshold ratio for Neff (Neff < N/2)
 
     # Odometry Motion Model Noise Parameters (alpha1 - alpha4)
     # alpha1: rotation noise from rotation
@@ -51,8 +54,8 @@ amcl_node:
     sigma_hit: 0.25
     min_range: 0.1
     max_range: 5.0
-    beam_skip: 2               # Subsampling step for laser beams
-    max_beams: 30             # Maximum number of laser beams evaluated per scan
+    beam_skip: 1               # Subsampling step for laser beams
+    max_beams: 60             # Maximum number of laser beams evaluated per scan
 
     # Augmented MCL Recovery (Sensor Failure & Kidnapping Recovery)
     enable_recovery: true      # Active in AMCL

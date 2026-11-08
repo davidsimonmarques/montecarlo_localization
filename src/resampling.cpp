@@ -127,6 +127,14 @@ void Resampler::resample(
     out_particles[m] = in_particles[i];
     out_particles[m].weight = inv_m;
 
+    if (map_model.is_loaded() && !map_model.is_in_bounds(out_particles[m].x, out_particles[m].y)) {
+      double rx = 0.0, ry = 0.0;
+      if (map_model.sample_free_space(rx, ry, rng)) {
+        out_particles[m].x = rx;
+        out_particles[m].y = ry;
+        out_particles[m].theta = dist_yaw(rng);
+      }
+    }
   }
 }
 

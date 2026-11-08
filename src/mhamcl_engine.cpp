@@ -39,11 +39,32 @@ void MHAMCLEngine::init_gaussian(
 
   const double initial_weight = 1.0 / static_cast<double>(amcl_params_.min_particles);
   for (int i = 0; i < amcl_params_.min_particles; ++i) {
-    particles_.emplace_back(
-      dist_x(rng_), dist_y(rng_), normalize_angle(dist_yaw(rng_)), initial_weight);
+    double px = dist_x(rng_);
+    double py = dist_y(rng_);
+    double pyaw = normalize_angle(dist_yaw(rng_));
+
+    if (map_model_.is_loaded()) {
+      int attempts = 0;
+      while (!map_model_.is_in_bounds(px, py) && attempts < 100) {
+        px = dist_x(rng_);
+        py = dist_y(rng_);
+        attempts++;
+      }
+      if (!map_model_.is_in_bounds(px, py)) {
+        if (map_model_.is_in_bounds(mean_x, mean_y)) {
+          px = mean_x;
+          py = mean_y;
+        } else {
+          map_model_.sample_free_space(px, py, rng_);
+        }
+      }
+    }
+
+    particles_.emplace_back(px, py, pyaw, initial_weight);
   }
 
   resampler_.reset_recovery();
+  update_count_ = 0;
   is_initialized_ = true;
 }
 
@@ -136,6 +157,15 @@ void MHAMCLEngine::resample()
       auto it = std::lower_bound(cdf.begin(), cdf.end(), r);
       const size_t idx = std::min(static_cast<size_t>(std::distance(cdf.begin(), it)), old_size - 1);
       p = particles_[idx];
+    }
+
+    if (map_model_.is_loaded() && !map_model_.is_in_bounds(p.x, p.y)) {
+      double rx = 0.0, ry = 0.0;
+      if (map_model_.sample_free_space(rx, ry, rng_)) {
+        p.x = rx;
+        p.y = ry;
+        p.theta = dist_yaw(rng_);
+      }
     }
 
     new_particles.push_back(p);
