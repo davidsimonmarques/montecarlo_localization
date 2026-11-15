@@ -52,14 +52,22 @@ void Resampler::update_recovery_weights(double avg_likelihood)
   if (!std::isfinite(avg_likelihood) || avg_likelihood < 0.0) {
     avg_likelihood = 0.0;
   }
+  // Reference likelihood ceiling for a converged filter:
+  // - Prevents global localization initialization (low initial avg_likelihood ~0.08) from locking
+  //   w_slow_ too low (which would disable recovery when stuck in a wrong room with avg_likelihood ~0.25).
+  // - Caps w_slow_ when well-localized so normal geometry variations on turns (e.g. 1.4 -> 0.85)
+  //   do not falsely trigger random particle injection after convergence.
+  constexpr double kConvergedReferenceCap = 0.38;
   if (!initialized_) {
-    w_slow_ = avg_likelihood > 0.0 ? avg_likelihood : 1.0;
+    w_slow_ = (avg_likelihood > 0.0) ? std::max(avg_likelihood, 0.34) : 1.0;
+    w_slow_ = std::min(w_slow_, kConvergedReferenceCap);
     w_fast_ = avg_likelihood;
     initialized_ = true;
     return;
   }
 
-  w_slow_ += params_.alpha_slow * (avg_likelihood - w_slow_);
+  const double target_slow = std::min(avg_likelihood, kConvergedReferenceCap);
+  w_slow_ += params_.alpha_slow * (target_slow - w_slow_);
   w_fast_ += params_.alpha_fast * (avg_likelihood - w_fast_);
 }
 
@@ -127,7 +135,7 @@ void Resampler::resample(
     out_particles[m] = in_particles[i];
     out_particles[m].weight = inv_m;
 
-    if (map_model.is_loaded() && !map_model.is_in_bounds(out_particles[m].x, out_particles[m].y)) {
+    if (map_model.is_loaded() && !map_model.is_free_position(out_particles[m].x, out_particles[m].y)) {
       double rx = 0.0, ry = 0.0;
       if (map_model.sample_free_space(rx, ry, rng)) {
         out_particles[m].x = rx;

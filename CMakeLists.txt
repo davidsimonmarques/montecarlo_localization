@@ -33,6 +33,7 @@ add_library(montecarlo_localization_core SHARED
   src/amcl_node.cpp
   src/mhmcl_node.cpp
   src/mhamcl_node.cpp
+  src/fastlio_bridge_node.cpp
 )
 
 target_include_directories(montecarlo_localization_core PUBLIC
@@ -112,6 +113,19 @@ ament_target_dependencies(goal_relay_node
   geometry_msgs
 )
 
+# FAST-LIO2 Bridge Node (converts 2D LaserScan + IMU for FAST-LIO2 and adapts /Odometry -> /fastlio2/odom)
+add_executable(fastlio_bridge_node
+  src/fastlio_bridge_main.cpp
+)
+
+target_link_libraries(fastlio_bridge_node
+  montecarlo_localization_core
+)
+
+ament_target_dependencies(fastlio_bridge_node
+  rclcpp
+)
+
 # Install targets and directories
 install(
   TARGETS
@@ -121,6 +135,7 @@ install(
     mhmcl_node
     mhamcl_node
     goal_relay_node
+    fastlio_bridge_node
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION lib/${PROJECT_NAME}

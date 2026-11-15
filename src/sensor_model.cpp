@@ -53,10 +53,14 @@ SensorModel::PreparedScan SensorModel::prepare_scan(
     {
       continue;
     }
+    const double r = static_cast<double>(range);
+    const double angle = scan.angle_min + static_cast<double>(i) * scan.angle_increment;
     prepared.beams.push_back(
       {
-        static_cast<double>(range),
-        scan.angle_min + static_cast<double>(i) * scan.angle_increment});
+        r,
+        angle,
+        r * std::cos(angle),
+        r * std::sin(angle)});
   }
 
   prepared.random_density = params_.z_rand / params_.max_range;
@@ -78,6 +82,12 @@ double SensorModel::log_likelihood(
   {
     return -std::numeric_limits<double>::infinity();
   }
+
+  // Clearance check: reject if inside obstacle or too close to wall (aligned with Villela parallel_utils.py robot clearance)
+  if (map_model.get_distance_to_obstacle(particle.x, particle.y) <= 0.09) {
+    return -std::numeric_limits<double>::infinity();
+  }
+
   if (scan.beams.empty()) {
     return 0.0;
   }
@@ -88,13 +98,19 @@ double SensorModel::log_likelihood(
     particle.x + params_.laser_x * cos_theta - params_.laser_y * sin_theta;
   const double laser_y =
     particle.y + params_.laser_x * sin_theta + params_.laser_y * cos_theta;
-  const double laser_theta = normalize_angle(particle.theta + params_.laser_yaw);
+
+  double cos_laser = cos_theta;
+  double sin_laser = sin_theta;
+  if (params_.laser_yaw != 0.0) {
+    const double laser_theta = normalize_angle(particle.theta + params_.laser_yaw);
+    cos_laser = std::cos(laser_theta);
+    sin_laser = std::sin(laser_theta);
+  }
 
   double log_probability = 0.0;
   for (const auto & beam : scan.beams) {
-    const double beam_theta = laser_theta + beam.angle;
-    const double endpoint_x = laser_x + beam.range * std::cos(beam_theta);
-    const double endpoint_y = laser_y + beam.range * std::sin(beam_theta);
+    const double endpoint_x = laser_x + beam.local_x * cos_laser - beam.local_y * sin_laser;
+    const double endpoint_y = laser_y + beam.local_x * sin_laser + beam.local_y * cos_laser;
     const double distance = map_model.get_distance_to_obstacle(endpoint_x, endpoint_y);
     const double p_hit = scan.hit_gaussian_factor *
       std::exp(-(distance * distance) / scan.two_sigma_sq);
@@ -133,6 +149,17 @@ double SensorModel::update_weights(
     prior_sum = static_cast<double>(particles.size());
   }
 
+  const double num_beams = static_cast<double>(scan.beams.empty() ? 1 : scan.beams.size());
+  // Normalize log-likelihood temperature (aligned with Villela et al. per-beam score normalization)
+  // so correlated beams do not cause premature particle deprivation on early scans or allow one
+  // random recovery particle to overthrow a converged cluster.
+  constexpr double kEffectiveBeams = 2.5;
+  const double beam_scale = std::min(1.0, kEffectiveBeams / num_beams);
+  const double max_beam_prob = std::max(
+    1e-6, params_.z_hit * scan.hit_gaussian_factor + scan.random_density);
+  double sum_per_beam = 0.0;
+  size_t valid_count = 0;
+
   std::vector<double> log_joint(particles.size(), -std::numeric_limits<double>::infinity());
   double max_log_joint = -std::numeric_limits<double>::infinity();
   for (size_t i = 0; i < particles.size(); ++i) {
@@ -147,7 +174,9 @@ double SensorModel::update_weights(
     if (!std::isfinite(observation_log_likelihood)) {
       continue;
     }
-    log_joint[i] = std::log(prior_weight) + observation_log_likelihood;
+    sum_per_beam += std::exp(observation_log_likelihood / num_beams) / max_beam_prob;
+    valid_count++;
+    log_joint[i] = std::log(prior_weight) + observation_log_likelihood * beam_scale;
     max_log_joint = std::max(max_log_joint, log_joint[i]);
   }
 
@@ -173,12 +202,7 @@ double SensorModel::update_weights(
       std::exp(log_joint[i] - log_evidence) : 0.0;
   }
 
-  if (log_evidence < std::log(std::numeric_limits<double>::min())) {
-    return 0.0;
-  }
-  return std::exp(
-    std::min(
-      log_evidence, std::log(std::numeric_limits<double>::max())));
+  return valid_count > 0 ? (sum_per_beam / static_cast<double>(particles.size())) : 0.0;
 }
 
 }  // namespace montecarlo_localization

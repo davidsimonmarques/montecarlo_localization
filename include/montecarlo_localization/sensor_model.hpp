@@ -32,6 +32,8 @@ public:
   {
     double range;
     double angle;
+    double local_x{0.0};
+    double local_y{0.0};
   };
 
   struct PreparedScan

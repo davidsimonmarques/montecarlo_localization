@@ -10,8 +10,9 @@ namespace montecarlo_localization
 
 struct AMCLParameters : public MCLParameters
 {
-  int min_particles{500};
-  int max_particles{5000};
+  bool enable_kld{false};          // False: Fixed particle count (Augmented MCL, Villela et al. 2025). True: KLD-Sampling
+  int min_particles{3000};
+  int max_particles{12000};
   double kld_err{0.05};            // Error bound epsilon
   double kld_z{2.32635};           // Standard normal quantile z_{1-delta} (0.99 confidence)
   double spatial_resolution_x{0.5};     // Spatial bin size in X (meters)

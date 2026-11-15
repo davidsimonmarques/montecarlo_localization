@@ -17,9 +17,11 @@ amcl_node:
     # to prevent conflicting map -> odom transforms in the TF tree.
     publish_tf: true
 
+    # Particle Configuration (alinhado ao artigo Villela et al. IEEE DASC 2025)
+    enable_kld: false            # Desativa variação KLD para operar com N fixo como no artigo
+    num_particles: 12000         # 12.000 partículas (idêntico ao MCL e MH-MCL para comparação justa)
+
     # KLD-Sampling Adaptive Particle Filter Parameters (Dieter Fox 2001/2003)
-    # The number of particles dynamically adapts between min_particles and max_particles
-    # according to the spatial dispersion (occupied bins) and statistical error bounds.
     min_particles: 3000
     max_particles: 12000
     kld_err: 0.05              # Max error epsilon between true distribution and particle distribution
@@ -36,32 +38,29 @@ amcl_node:
     resample_threshold_ratio: 0.5 # Threshold ratio for Neff (Neff < N/2)
 
     # Odometry Motion Model Noise Parameters (alpha1 - alpha4)
-    # alpha1: rotation noise from rotation
-    # alpha2: rotation noise from translation
-    # alpha3: translation noise from translation
-    # alpha4: translation noise from rotation
-    alpha1: 0.02
-    alpha2: 0.02
-    alpha3: 0.02
-    alpha4: 0.02
+    # alpha1: calibrado para derrapagem do Husky (skid-steer) no CoppeliaSim
+    alpha1: 0.25
+    alpha2: 0.05
+    alpha3: 0.05
+    alpha4: 0.05
 
     # Sensor Model Parameters (Likelihood Field for LaserScan)
     # z_hit: weight of correct obstacle measurement
     # z_rand: weight of uniform random noise
     # sigma_hit: standard deviation of Gaussian hit model (meters)
-    z_hit: 0.85
-    z_rand: 0.15
-    sigma_hit: 0.25
+    z_hit: 0.90
+    z_rand: 0.10
+    sigma_hit: 0.20
     min_range: 0.1
-    max_range: 5.0
+    max_range: 10.0
     beam_skip: 1               # Subsampling step for laser beams
     max_beams: 60             # Maximum number of laser beams evaluated per scan
 
     # Augmented MCL Recovery (Sensor Failure & Kidnapping Recovery)
     enable_recovery: true      # Active in AMCL
     alpha_slow: 0.001          # Decay rate for slow average weight filter
-    alpha_fast: 0.1            # Decay rate for fast average weight filter
-    recovery_max_prob: 0.2     # Maximum probability cap for random sample injection
+    alpha_fast: 0.03           # Decay rate for fast average weight filter (alinhado aos autores)
+    recovery_max_prob: 0.05    # Injeção moderada de partículas aleatórias para escapar de simetrias locais
 
     # Initial Pose Configuration
     auto_initialize: true              # Automatically initialize particles when map is received

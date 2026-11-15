@@ -103,20 +103,34 @@ AMCLEngine::AMCLEngine(const AMCLParameters & params)
 
 void AMCLEngine::set_amcl_parameters(const AMCLParameters & params)
 {
-  if (params.min_particles <= 0 || params.max_particles < params.min_particles ||
-    !std::isfinite(params.kld_err) || params.kld_err <= 0.0 ||
-    !std::isfinite(params.kld_z) || params.kld_z <= 0.0 ||
-    !std::isfinite(params.spatial_resolution_x) || params.spatial_resolution_x <= 0.0 ||
-    !std::isfinite(params.spatial_resolution_y) || params.spatial_resolution_y <= 0.0 ||
-    !std::isfinite(params.spatial_resolution_theta) ||
-    params.spatial_resolution_theta <= 0.0 ||
-    params.resample_params.alpha_slow > params.resample_params.alpha_fast)
-  {
-    throw std::invalid_argument("Invalid AMCL particle or KLD-Sampling parameters");
+  if (params.enable_kld) {
+    if (params.min_particles <= 0 || params.max_particles < params.min_particles ||
+      !std::isfinite(params.kld_err) || params.kld_err <= 0.0 ||
+      !std::isfinite(params.kld_z) || params.kld_z <= 0.0 ||
+      !std::isfinite(params.spatial_resolution_x) || params.spatial_resolution_x <= 0.0 ||
+      !std::isfinite(params.spatial_resolution_y) || params.spatial_resolution_y <= 0.0 ||
+      !std::isfinite(params.spatial_resolution_theta) ||
+      params.spatial_resolution_theta <= 0.0)
+    {
+      throw std::invalid_argument("Invalid AMCL KLD-Sampling parameters");
+    }
+  } else {
+    if (params.num_particles <= 0) {
+      throw std::invalid_argument("num_particles must be greater than zero for fixed-particle AMCL");
+    }
+  }
+
+  if (params.resample_params.alpha_slow > params.resample_params.alpha_fast) {
+    throw std::invalid_argument("alpha_slow cannot be greater than alpha_fast");
   }
 
   AMCLParameters normalized_params = params;
-  normalized_params.num_particles = normalized_params.max_particles;
+  if (!normalized_params.enable_kld && normalized_params.num_particles > 0) {
+    normalized_params.max_particles = normalized_params.num_particles;
+    normalized_params.min_particles = normalized_params.num_particles;
+  } else {
+    normalized_params.num_particles = normalized_params.max_particles;
+  }
   MCLEngine::set_parameters(normalized_params);
   amcl_params_ = normalized_params;
 }
@@ -133,14 +147,15 @@ void AMCLEngine::init_gaussian(
   double std_x, double std_y, double std_yaw)
 {
   particles_.clear();
-  particles_.reserve(static_cast<size_t>(amcl_params_.min_particles));
+  const int count = amcl_params_.enable_kld ? amcl_params_.min_particles : amcl_params_.num_particles;
+  particles_.reserve(static_cast<size_t>(count));
 
   std::normal_distribution<double> dist_x(mean_x, std::max(1e-4, std_x));
   std::normal_distribution<double> dist_y(mean_y, std::max(1e-4, std_y));
   std::normal_distribution<double> dist_yaw(mean_yaw, std::max(1e-4, std_yaw));
 
-  const double initial_weight = 1.0 / amcl_params_.min_particles;
-  for (int i = 0; i < amcl_params_.min_particles; ++i) {
+  const double initial_weight = 1.0 / static_cast<double>(count);
+  for (int i = 0; i < count; ++i) {
     particles_.emplace_back(
       dist_x(rng_), dist_y(rng_), normalize_angle(dist_yaw(rng_)), initial_weight);
   }
@@ -156,11 +171,12 @@ bool AMCLEngine::init_global()
   }
 
   particles_.clear();
-  particles_.reserve(static_cast<size_t>(amcl_params_.max_particles));
+  const int count = amcl_params_.enable_kld ? amcl_params_.max_particles : amcl_params_.num_particles;
+  particles_.reserve(static_cast<size_t>(count));
 
   std::uniform_real_distribution<double> dist_yaw(-M_PI, M_PI);
-  const double initial_weight = 1.0 / amcl_params_.max_particles;
-  for (int i = 0; i < amcl_params_.max_particles; ++i) {
+  const double initial_weight = 1.0 / static_cast<double>(count);
+  for (int i = 0; i < count; ++i) {
     double x = 0.0;
     double y = 0.0;
     if (!map_model_.sample_free_space(x, y, rng_)) {
@@ -182,6 +198,15 @@ void AMCLEngine::process_update(
   const sensor_msgs::msg::LaserScan & scan)
 {
   if (!is_initialized_ || particles_.empty() || !map_model_.is_loaded()) {
+    return;
+  }
+
+  // When enable_kld is false, execute exact Algorithm 1 from Villela et al. (IEEE DASC 2025):
+  // 1. Motion model prediction for all M particles
+  // 2. Sensor likelihood weighting and w_slow / w_fast recovery filter update
+  // 3. Mixed Resampling (Algorithm 1, lines 12-19) with fixed M particles
+  if (!amcl_params_.enable_kld) {
+    MCLEngine::process_update(prev_odom, curr_odom, scan);
     return;
   }
 
@@ -289,10 +314,19 @@ void AMCLEngine::process_update(
     }
   }
 
-  // Normalize particle weights using log-sum-exp
+  // Normalize particle weights using log-sum-exp with effective beam scaling
+  const double num_beams = static_cast<double>(prepared_scan.beams.empty() ? 1 : prepared_scan.beams.size());
+  constexpr double kEffectiveBeams = 2.5;
+  const double beam_scale = std::min(1.0, kEffectiveBeams / num_beams);
+  const auto & sp = sensor_model_.get_parameters();
+  const double max_beam_prob = std::max(
+    1e-6, sp.z_hit * prepared_scan.hit_gaussian_factor + prepared_scan.random_density);
+
   double max_log_likelihood = -std::numeric_limits<double>::infinity();
   for (const double log_likelihood : log_likelihoods) {
-    max_log_likelihood = std::max(max_log_likelihood, log_likelihood);
+    if (std::isfinite(log_likelihood)) {
+      max_log_likelihood = std::max(max_log_likelihood, log_likelihood * beam_scale);
+    }
   }
 
   double average_likelihood = 0.0;
@@ -300,24 +334,24 @@ void AMCLEngine::process_update(
     double scaled_likelihood_sum = 0.0;
     for (size_t i = 0; i < generated_particles.size(); ++i) {
       if (std::isfinite(log_likelihoods[i])) {
-        scaled_likelihood_sum += std::exp(log_likelihoods[i] - max_log_likelihood);
+        scaled_likelihood_sum += std::exp(log_likelihoods[i] * beam_scale - max_log_likelihood);
       }
-    }
-
-    const double log_average_likelihood =
-      max_log_likelihood + std::log(scaled_likelihood_sum) -
-      std::log(static_cast<double>(generated_particles.size()));
-    if (log_average_likelihood >= std::log(std::numeric_limits<double>::min())) {
-      average_likelihood = std::exp(
-        std::min(
-          log_average_likelihood, std::log(std::numeric_limits<double>::max())));
     }
 
     const double log_normalizer = max_log_likelihood + std::log(scaled_likelihood_sum);
     for (size_t i = 0; i < generated_particles.size(); ++i) {
       generated_particles[i].weight = std::isfinite(log_likelihoods[i]) ?
-        std::exp(log_likelihoods[i] - log_normalizer) : 0.0;
+        std::exp(log_likelihoods[i] * beam_scale - log_normalizer) : 0.0;
     }
+
+    // Average normalized per-beam likelihood across particles in [0, 1]
+    double sum_per_beam = 0.0;
+    for (const double log_l : log_likelihoods) {
+      if (std::isfinite(log_l)) {
+        sum_per_beam += std::exp(log_l / num_beams) / max_beam_prob;
+      }
+    }
+    average_likelihood = sum_per_beam / static_cast<double>(generated_particles.size());
   } else {
     const double uniform_weight = 1.0 / static_cast<double>(generated_particles.size());
     for (auto & particle : generated_particles) {
@@ -333,12 +367,21 @@ void AMCLEngine::process_update(
 
 void AMCLEngine::update_sensor(const sensor_msgs::msg::LaserScan & scan)
 {
+  if (!amcl_params_.enable_kld) {
+    MCLEngine::update_sensor(scan);
+    return;
+  }
   process_update(Pose2D{}, Pose2D{}, scan);
 }
 
 void AMCLEngine::resample()
 {
   if (!is_initialized_ || particles_.empty()) {
+    return;
+  }
+
+  if (!amcl_params_.enable_kld) {
+    MCLEngine::resample();
     return;
   }
 

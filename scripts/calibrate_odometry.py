@@ -41,19 +41,30 @@ class OdomCalibrator(Node):
         
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.odom_sub = self.create_subscription(Odometry, '/odom', self.odom_cb, 10)
-        self.gt_sub = self.create_subscription(PoseStamped, '/pose_ground_truth', self.gt_cb, 10)
+        
+        # Suporta tanto /ground_truth (nav_msgs/Odometry) quanto /pose_ground_truth (PoseStamped)
+        self.gt_odom_sub = self.create_subscription(Odometry, '/ground_truth', self.gt_odom_cb, 10)
+        self.gt_pose_sub = self.create_subscription(PoseStamped, '/pose_ground_truth', self.gt_pose_cb, 10)
 
         self.latest_odom = None
         self.latest_gt = None
         
-        self.get_logger().info("Aguardando conexao com os topicos /odom e /pose_ground_truth do CoppeliaSim...")
+        self.accum_odom_yaw = 0.0
+        self.accum_gt_yaw = 0.0
+        
+        self.get_logger().info("Aguardando conexao com os topicos /odom e /ground_truth do CoppeliaSim...")
 
     def odom_cb(self, msg):
         pos = msg.pose.pose.position
         yaw = quaternion_to_yaw(msg.pose.pose.orientation)
         self.latest_odom = (pos.x, pos.y, yaw)
 
-    def gt_cb(self, msg):
+    def gt_odom_cb(self, msg):
+        pos = msg.pose.pose.position
+        yaw = quaternion_to_yaw(msg.pose.pose.orientation)
+        self.latest_gt = (pos.x, pos.y, yaw)
+
+    def gt_pose_cb(self, msg):
         pos = msg.pose.position
         yaw = quaternion_to_yaw(msg.pose.orientation)
         self.latest_gt = (pos.x, pos.y, yaw)
@@ -89,27 +100,46 @@ class OdomCalibrator(Node):
         time.sleep(1.5)  # Estabilizacao
 
     def rotate_angle(self, angle_rad, omega=0.5):
-        """Executa o Teste B: gira o angulo desejado no proprio eixo."""
+        """Executa o Teste B: gira o angulo desejado no proprio eixo e acumula o yaw sem wrap."""
         duration = abs(angle_rad) / omega
         cmd = Twist()
         cmd.linear.x = 0.0
         cmd.angular.z = omega if angle_rad > 0 else -omega
 
+        self.accum_odom_yaw = 0.0
+        self.accum_gt_yaw = 0.0
+        prev_odom_yaw = self.latest_odom[2]
+        prev_gt_yaw = self.latest_gt[2]
+
         t_end = time.time() + duration
         while time.time() < t_end:
             self.cmd_pub.publish(cmd)
-            rclpy.spin_once(self, timeout_sec=0.05)
-            time.sleep(0.05)
+            rclpy.spin_once(self, timeout_sec=0.02)
+            curr_odom_yaw = self.latest_odom[2]
+            curr_gt_yaw = self.latest_gt[2]
+            self.accum_odom_yaw += normalize_angle(curr_odom_yaw - prev_odom_yaw)
+            self.accum_gt_yaw += normalize_angle(curr_gt_yaw - prev_gt_yaw)
+            prev_odom_yaw = curr_odom_yaw
+            prev_gt_yaw = curr_gt_yaw
+            time.sleep(0.02)
 
         self.stop_robot()
         time.sleep(1.5)  # Estabilizacao
+        for _ in range(5):
+            rclpy.spin_once(self, timeout_sec=0.02)
+            curr_odom_yaw = self.latest_odom[2]
+            curr_gt_yaw = self.latest_gt[2]
+            self.accum_odom_yaw += normalize_angle(curr_odom_yaw - prev_odom_yaw)
+            self.accum_gt_yaw += normalize_angle(curr_gt_yaw - prev_gt_yaw)
+            prev_odom_yaw = curr_odom_yaw
+            prev_gt_yaw = curr_gt_yaw
 
 def main():
     rclpy.init()
     node = OdomCalibrator()
 
     if not node.wait_for_data():
-        node.get_logger().error("ERRO: Nao foi possivel receber /odom ou /pose_ground_truth. A simulacao esta rodando no CoppeliaSim?")
+        node.get_logger().error("ERRO: Nao foi possivel receber /odom ou /ground_truth. A simulacao esta rodando no CoppeliaSim?")
         node.destroy_node()
         rclpy.shutdown()
         return
@@ -183,25 +213,23 @@ def main():
     end_odom_b = node.latest_odom
     end_gt_b = node.latest_gt
 
-    # Rotação odom vs ground truth e desvio de translação
-    yaw_odom_b = normalize_angle(end_odom_b[2] - start_odom_b[2])
-    yaw_gt_b = normalize_angle(end_gt_b[2] - start_gt_b[2])
-    
-    # Se deu volta completa (~2*pi), o delta normalizado pode ser pequeno, corrigimos:
-    rot_nominal = 2.0 * math.pi
-    err_rot_b = abs(yaw_odom_b - yaw_gt_b)
+    # Rotação acumulada contínua odom vs ground truth e desvio de translação
+    accum_odom = node.accum_odom_yaw
+    accum_gt = node.accum_gt_yaw
+    err_rot_b = abs(accum_odom - accum_gt)
 
     dx_gt_b = end_gt_b[0] - start_gt_b[0]
     dy_gt_b = end_gt_b[1] - start_gt_b[1]
     drift_trans_b = math.sqrt(dx_gt_b**2 + dy_gt_b**2)
 
-    print(f"  -> Rotacao Real (Ground Truth)   : {math.degrees(yaw_gt_b):.2f} deg")
-    print(f"  -> Rotacao Odometria             : {math.degrees(yaw_odom_b):.2f} deg")
+    print(f"  -> Rotacao Real (Ground Truth)   : {math.degrees(accum_gt):.2f} deg ({accum_gt:.4f} rad)")
+    print(f"  -> Rotacao Odometria             : {math.degrees(accum_odom):.2f} deg ({accum_odom:.4f} rad)")
     print(f"  -> Erro Angular de Rotacao       : {math.degrees(err_rot_b):.2f} deg ({err_rot_b:.4f} rad)")
     print(f"  -> Deslocamento Linear no Giro   : {drift_trans_b:.4f} m")
 
-    raw_alpha1 = (err_rot_b / max(0.1, rot_nominal)) ** 2
-    raw_alpha4 = (drift_trans_b / max(0.1, rot_nominal)) ** 2
+    rot_nominal = max(0.1, abs(accum_gt))
+    raw_alpha1 = (err_rot_b / rot_nominal) ** 2
+    raw_alpha4 = (drift_trans_b / rot_nominal) ** 2
 
     # Fator de segurança (1.5x) e piso mínimo (0.02)
     SAFETY = 1.5

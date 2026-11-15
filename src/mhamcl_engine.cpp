@@ -31,14 +31,15 @@ void MHAMCLEngine::init_gaussian(
   double std_x, double std_y, double std_yaw)
 {
   particles_.clear();
-  particles_.reserve(static_cast<size_t>(amcl_params_.min_particles));
+  const int count = amcl_params_.enable_kld ? amcl_params_.min_particles : amcl_params_.num_particles;
+  particles_.reserve(static_cast<size_t>(count));
 
   std::normal_distribution<double> dist_x(mean_x, std::max(1e-4, std_x));
   std::normal_distribution<double> dist_y(mean_y, std::max(1e-4, std_y));
   std::normal_distribution<double> dist_yaw(mean_yaw, std::max(1e-4, std_yaw));
 
-  const double initial_weight = 1.0 / static_cast<double>(amcl_params_.min_particles);
-  for (int i = 0; i < amcl_params_.min_particles; ++i) {
+  const double initial_weight = 1.0 / static_cast<double>(count);
+  for (int i = 0; i < count; ++i) {
     double px = dist_x(rng_);
     double py = dist_y(rng_);
     double pyaw = normalize_angle(dist_yaw(rng_));
@@ -75,11 +76,12 @@ bool MHAMCLEngine::init_global()
   }
 
   particles_.clear();
-  particles_.reserve(static_cast<size_t>(amcl_params_.max_particles));
+  const int count = amcl_params_.enable_kld ? amcl_params_.max_particles : amcl_params_.num_particles;
+  particles_.reserve(static_cast<size_t>(count));
 
   std::uniform_real_distribution<double> dist_yaw(-M_PI, M_PI);
-  const double initial_weight = 1.0 / static_cast<double>(amcl_params_.max_particles);
-  for (int i = 0; i < amcl_params_.max_particles; ++i) {
+  const double initial_weight = 1.0 / static_cast<double>(count);
+  for (int i = 0; i < count; ++i) {
     double x = 0.0;
     double y = 0.0;
     if (!map_model_.sample_free_space(x, y, rng_)) {
@@ -98,6 +100,13 @@ bool MHAMCLEngine::init_global()
 void MHAMCLEngine::resample()
 {
   if (!is_initialized_ || particles_.empty()) {
+    return;
+  }
+
+  // Exact Algorithm 3, Line 22 (Mixed Resampling, Villela et al. 2025):
+  // When enable_kld is false, run mixed resampling with fixed particle count M.
+  if (!amcl_params_.enable_kld) {
+    MCLEngine::resample();
     return;
   }
 

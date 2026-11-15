@@ -28,9 +28,13 @@ void MHAMCLNode::declare_and_get_parameters()
   this->declare_parameter<bool>("publish_tf", true);
   this->declare_parameter<std::int64_t>("random_seed", -1);
 
+  // Particle Configuration: fixed count (Villela et al. 2025) or KLD-sampling
+  this->declare_parameter<bool>("enable_kld", false);
+  this->declare_parameter<int>("num_particles", 12000);
+
   // KLD-Sampling Adaptive Particle Parameters
-  this->declare_parameter<int>("min_particles", 500);
-  this->declare_parameter<int>("max_particles", 5000);
+  this->declare_parameter<int>("min_particles", 3000);
+  this->declare_parameter<int>("max_particles", 12000);
   this->declare_parameter<double>("kld_err", 0.05);
   this->declare_parameter<double>("kld_z", 2.32635);
   this->declare_parameter<double>("spatial_resolution_x", 0.5);
@@ -87,9 +91,10 @@ void MHAMCLNode::declare_and_get_parameters()
   publish_tf_ = this->get_parameter("publish_tf").as_bool();
 
   AMCLParameters amcl_params;
+  amcl_params.enable_kld = this->get_parameter("enable_kld").as_bool();
   amcl_params.min_particles = this->get_parameter("min_particles").as_int();
   amcl_params.max_particles = this->get_parameter("max_particles").as_int();
-  amcl_params.num_particles = amcl_params.max_particles;
+  amcl_params.num_particles = this->get_parameter("num_particles").as_int();
   amcl_params.kld_err = this->get_parameter("kld_err").as_double();
   amcl_params.kld_z = this->get_parameter("kld_z").as_double();
   amcl_params.spatial_resolution_x = this->get_parameter("spatial_resolution_x").as_double();

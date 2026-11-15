@@ -184,16 +184,38 @@ void MCLEngine::predict(const Pose2D & prev_odom, const Pose2D & curr_odom)
   if (!is_initialized_ || particles_.empty()) {
     return;
   }
-  const std::vector<Particle> old_particles = particles_;
-  motion_model_.predict(particles_, prev_odom, curr_odom, rng_);
-  if (map_model_.is_loaded()) {
-    for (size_t i = 0; i < particles_.size(); ++i) {
-      if (!map_model_.is_in_bounds(particles_[i].x, particles_[i].y)) {
-        particles_[i].x = old_particles[i].x;
-        particles_[i].y = old_particles[i].y;
-        particles_[i].theta = old_particles[i].theta;
+  if (!map_model_.is_loaded()) {
+    motion_model_.predict(particles_, prev_odom, curr_odom, rng_);
+    return;
+  }
+
+  std::uniform_real_distribution<double> dist_u(0.0, 1.0);
+  std::uniform_real_distribution<double> dist_yaw(-M_PI, M_PI);
+  const double wall_respawn_prob = params_.resample_params.enable_recovery ? 0.25 : 0.04;
+
+  for (size_t i = 0; i < particles_.size(); ++i) {
+    const Particle base = particles_[i];
+    Particle cand = base;
+    bool valid = false;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      cand = base;
+      motion_model_.predict(cand, prev_odom, curr_odom, rng_);
+      if (map_model_.is_free_position(cand.x, cand.y) &&
+        map_model_.get_distance_to_obstacle(cand.x, cand.y) > 0.09)
+      {
+        valid = true;
+        break;
       }
     }
+    if (!valid && dist_u(rng_) < wall_respawn_prob) {
+      double rx = 0.0, ry = 0.0;
+      if (map_model_.sample_free_space(rx, ry, rng_)) {
+        cand.x = rx;
+        cand.y = ry;
+        cand.theta = dist_yaw(rng_);
+      }
+    }
+    particles_[i] = cand;
   }
 }
 
