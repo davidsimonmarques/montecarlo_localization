@@ -27,6 +27,13 @@ public:
   ~MHMCLEngine() override = default;
 
   /**
+   * @brief Initialize particles using a Gaussian distribution with MH prior burn-in contraction.
+   */
+  void init_gaussian(
+    double mean_x, double mean_y, double mean_yaw,
+    double std_x, double std_y, double std_yaw) override;
+
+  /**
    * @brief Executes one filter update iteration incorporating Metropolis-Hastings
    *        acceptance/rejection before resampling (Algorithm 3, lines 4-23).
    */
@@ -44,6 +51,8 @@ protected:
     const Pose2D & prev_odom,
     const Pose2D & curr_odom,
     const SensorModel::PreparedScan & prepared_scan);
+
+  double local_proposal_scale_{0.065};
 };
 
 }  // namespace montecarlo_localization

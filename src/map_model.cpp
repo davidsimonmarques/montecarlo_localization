@@ -30,6 +30,10 @@ void MapModel::set_map(
     origin_rotation.x * origin_rotation.y),
     1.0 - 2.0 * (origin_rotation.y * origin_rotation.y +
     origin_rotation.z * origin_rotation.z));
+  cos_origin_yaw_ = std::cos(origin_yaw_);
+  sin_origin_yaw_ = std::sin(origin_yaw_);
+  zero_origin_yaw_ = (std::abs(origin_yaw_) < 1e-9);
+  inv_resolution_ = (std::isfinite(resolution_) && resolution_ > 0.0) ? (1.0 / resolution_) : 20.0;
   occupied_thresh_ = occupied_thresh;
   free_thresh_ = free_thresh;
 
@@ -69,12 +73,15 @@ bool MapModel::world_to_map(double wx, double wy, int & mx, int & my) const
   }
   const double dx = wx - origin_x_;
   const double dy = wy - origin_y_;
-  const double cos_yaw = std::cos(origin_yaw_);
-  const double sin_yaw = std::sin(origin_yaw_);
-  const double local_x = dx * cos_yaw + dy * sin_yaw;
-  const double local_y = -dx * sin_yaw + dy * cos_yaw;
-  mx = static_cast<int>(std::floor(local_x / resolution_));
-  my = static_cast<int>(std::floor(local_y / resolution_));
+  if (zero_origin_yaw_) {
+    mx = static_cast<int>(std::floor(dx * inv_resolution_));
+    my = static_cast<int>(std::floor(dy * inv_resolution_));
+  } else {
+    const double local_x = dx * cos_origin_yaw_ + dy * sin_origin_yaw_;
+    const double local_y = -dx * sin_origin_yaw_ + dy * cos_origin_yaw_;
+    mx = static_cast<int>(std::floor(local_x * inv_resolution_));
+    my = static_cast<int>(std::floor(local_y * inv_resolution_));
+  }
   return is_valid_cell(mx, my);
 }
 
@@ -82,10 +89,8 @@ void MapModel::map_to_world(int mx, int my, double & wx, double & wy) const
 {
   const double local_x = (static_cast<double>(mx) + 0.5) * resolution_;
   const double local_y = (static_cast<double>(my) + 0.5) * resolution_;
-  const double cos_yaw = std::cos(origin_yaw_);
-  const double sin_yaw = std::sin(origin_yaw_);
-  wx = origin_x_ + local_x * cos_yaw - local_y * sin_yaw;
-  wy = origin_y_ + local_x * sin_yaw + local_y * cos_yaw;
+  wx = origin_x_ + local_x * cos_origin_yaw_ - local_y * sin_origin_yaw_;
+  wy = origin_y_ + local_x * sin_origin_yaw_ + local_y * cos_origin_yaw_;
 }
 
 bool MapModel::is_valid_cell(int mx, int my) const

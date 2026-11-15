@@ -42,7 +42,9 @@ public:
   /**
    * @brief Reset recovery filters to initial condition
    */
-  void reset_recovery();
+  void reset_recovery(bool global_mode = false);
+
+  bool is_global_mode() const { return global_mode_; }
 
   /**
    * @brief Get slow exponential average of observation likelihood
@@ -59,7 +61,7 @@ public:
    */
   double compute_recovery_probability() const
   {
-    if (params_.enable_recovery && w_slow_ > 0.0) {
+    if (params_.enable_recovery && global_mode_ && w_slow_ > 0.0) {
       const double p = std::max(0.0, 1.0 - (w_fast_ / w_slow_));
       return std::min(p, params_.recovery_max_prob);
     }
@@ -84,6 +86,7 @@ private:
   double w_slow_{0.0};
   double w_fast_{0.0};
   bool initialized_{false};
+  bool global_mode_{false};
 };
 
 }  // namespace montecarlo_localization

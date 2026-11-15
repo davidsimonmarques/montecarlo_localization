@@ -12,12 +12,14 @@ MHAMCLEngine::MHAMCLEngine()
 : MHMCLEngine(AMCLParameters{}),
   amcl_params_{}
 {
+  local_proposal_scale_ = 0.015;
 }
 
 MHAMCLEngine::MHAMCLEngine(const AMCLParameters & params)
 : MHMCLEngine(params),
   amcl_params_(params)
 {
+  local_proposal_scale_ = 0.015;
 }
 
 void MHAMCLEngine::set_amcl_parameters(const AMCLParameters & params)
@@ -34,9 +36,10 @@ void MHAMCLEngine::init_gaussian(
   const int count = amcl_params_.enable_kld ? amcl_params_.min_particles : amcl_params_.num_particles;
   particles_.reserve(static_cast<size_t>(count));
 
-  std::normal_distribution<double> dist_x(mean_x, std::max(1e-4, std_x));
-  std::normal_distribution<double> dist_y(mean_y, std::max(1e-4, std_y));
-  std::normal_distribution<double> dist_yaw(mean_yaw, std::max(1e-4, std_yaw));
+  const double scale = map_model_.is_loaded() ? 0.10 : 1.0;
+  std::normal_distribution<double> dist_x(mean_x, std::max(1e-4, std_x * scale));
+  std::normal_distribution<double> dist_y(mean_y, std::max(1e-4, std_y * scale));
+  std::normal_distribution<double> dist_yaw(mean_yaw, std::max(1e-4, std_yaw * scale));
 
   const double initial_weight = 1.0 / static_cast<double>(count);
   for (int i = 0; i < count; ++i) {
@@ -46,13 +49,17 @@ void MHAMCLEngine::init_gaussian(
 
     if (map_model_.is_loaded()) {
       int attempts = 0;
-      while (!map_model_.is_in_bounds(px, py) && attempts < 100) {
+      while (
+        (!map_model_.is_free_position(px, py) ||
+        map_model_.get_distance_to_obstacle(px, py) <= 0.09) &&
+        attempts < 100)
+      {
         px = dist_x(rng_);
         py = dist_y(rng_);
         attempts++;
       }
-      if (!map_model_.is_in_bounds(px, py)) {
-        if (map_model_.is_in_bounds(mean_x, mean_y)) {
+      if (!map_model_.is_free_position(px, py)) {
+        if (map_model_.is_free_position(mean_x, mean_y)) {
           px = mean_x;
           py = mean_y;
         } else {
@@ -92,7 +99,7 @@ bool MHAMCLEngine::init_global()
     particles_.emplace_back(x, y, dist_yaw(rng_), initial_weight);
   }
 
-  resampler_.reset_recovery();
+  resampler_.reset_recovery(true);
   is_initialized_ = true;
   return true;
 }

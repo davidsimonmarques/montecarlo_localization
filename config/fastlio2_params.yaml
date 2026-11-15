@@ -143,16 +143,16 @@ montecarlo_localization_node:
     selective_resampling: true
     resample_threshold_ratio: 0.5
 
-    # Odometry Motion Model Noise Parameters (reduzidos para aproveitar a precisão do FAST-LIO2)
-    alpha1: 0.005
-    alpha2: 0.005
-    alpha3: 0.005
-    alpha4: 0.005
+    # Odometry Motion Model Noise Parameters (calibrados para FAST-LIO2)
+    alpha1: 0.15
+    alpha2: 0.05
+    alpha3: 0.10
+    alpha4: 0.05
 
     # Sensor Model Parameters (Likelihood Field para LaserScan)
-    z_hit: 0.85
-    z_rand: 0.15
-    sigma_hit: 0.25
+    z_hit: 0.90
+    z_rand: 0.10
+    sigma_hit: 0.20
     min_range: 0.1
     max_range: 5.0
     beam_skip: 1
@@ -161,10 +161,10 @@ montecarlo_localization_node:
     # Augmented MCL Recovery (desativado no MCL padrão)
     enable_recovery: false
     alpha_slow: 0.001
-    alpha_fast: 0.1
-    recovery_max_prob: 0.2
+    alpha_fast: 0.02
+    recovery_max_prob: 0.05
 
-    # Initial Pose (Rastreamento com pose inicial conhecida, conforme Seção IV do artigo)
+    # Initial Pose
     auto_initialize: true
     global_localization_on_start: false
     initial_pose_x: 11.16
@@ -212,16 +212,16 @@ amcl_node:
     selective_resampling: true
     resample_threshold_ratio: 0.5
 
-    # Odometry Motion Model Noise Parameters (ajustados para o FAST-LIO2)
-    alpha1: 0.005
-    alpha2: 0.005
-    alpha3: 0.005
-    alpha4: 0.005
+    # Odometry Motion Model Noise Parameters (calibrados para FAST-LIO2)
+    alpha1: 0.15
+    alpha2: 0.05
+    alpha3: 0.10
+    alpha4: 0.05
 
     # Sensor Model Parameters
-    z_hit: 0.85
-    z_rand: 0.15
-    sigma_hit: 0.25
+    z_hit: 0.90
+    z_rand: 0.10
+    sigma_hit: 0.20
     min_range: 0.1
     max_range: 5.0
     beam_skip: 1
@@ -230,10 +230,10 @@ amcl_node:
     # Augmented MCL Recovery (ativado conforme Algoritmo 1 de Villela et al. 2025)
     enable_recovery: true
     alpha_slow: 0.001
-    alpha_fast: 0.02           # Suave para evitar falso alarme de sequestro
-    recovery_max_prob: 0.05    # Limite maximo de 5% de injecao aleatoria para manter o cluster denso
+    alpha_fast: 0.02
+    recovery_max_prob: 0.02
 
-    # Initial Pose (Rastreamento com pose inicial conhecida, conforme Seção IV do artigo)
+    # Initial Pose
     auto_initialize: true
     global_localization_on_start: false
     initial_pose_x: 11.16
@@ -270,16 +270,16 @@ mhmcl_node:
     selective_resampling: true
     resample_threshold_ratio: 0.5
 
-    # Odometry Motion Model Noise Parameters (ajustados para o FAST-LIO2)
-    alpha1: 0.005
-    alpha2: 0.005
-    alpha3: 0.005
-    alpha4: 0.005
+    # Odometry Motion Model Noise Parameters (calibrados para FAST-LIO2)
+    alpha1: 0.15
+    alpha2: 0.05
+    alpha3: 0.10
+    alpha4: 0.05
 
     # Sensor Model Parameters
-    z_hit: 0.85
-    z_rand: 0.15
-    sigma_hit: 0.25
+    z_hit: 0.90
+    z_rand: 0.10
+    sigma_hit: 0.20
     min_range: 0.1
     max_range: 5.0
     beam_skip: 1
@@ -288,10 +288,10 @@ mhmcl_node:
     # Recovery (desativado no MH-MCL, conforme Algoritmo 3 linha 20 de Villela et al. 2025)
     enable_recovery: false
     alpha_slow: 0.001
-    alpha_fast: 0.1
-    recovery_max_prob: 0.2
+    alpha_fast: 0.02
+    recovery_max_prob: 0.05
 
-    # Initial Pose (Rastreamento com pose conhecida conforme Seção IV do artigo)
+    # Initial Pose
     auto_initialize: true
     global_localization_on_start: false
     initial_pose_x: 11.16
@@ -339,16 +339,16 @@ mhamcl_node:
     selective_resampling: true
     resample_threshold_ratio: 0.5
 
-    # Odometry Motion Model Noise Parameters (ajustados para o FAST-LIO2)
-    alpha1: 0.005
-    alpha2: 0.005
-    alpha3: 0.005
-    alpha4: 0.005
+    # Odometry Motion Model Noise Parameters (calibrados para FAST-LIO2)
+    alpha1: 0.15
+    alpha2: 0.05
+    alpha3: 0.10
+    alpha4: 0.05
 
     # Sensor Model Parameters
-    z_hit: 0.85
-    z_rand: 0.15
-    sigma_hit: 0.25
+    z_hit: 0.90
+    z_rand: 0.10
+    sigma_hit: 0.20
     min_range: 0.1
     max_range: 5.0
     beam_skip: 1
@@ -357,10 +357,10 @@ mhamcl_node:
     # Mixed Resampling with recovery (ativado no MH-AMCL, conforme Algoritmo 3 linha 22 de Villela et al. 2025)
     enable_recovery: true
     alpha_slow: 0.001
-    alpha_fast: 0.02           # Suave para evitar falso alarme de sequestro
-    recovery_max_prob: 0.05    # Limite maximo de 5% de injecao aleatoria para manter o cluster denso
+    alpha_fast: 0.02
+    recovery_max_prob: 0.02
 
-    # Initial Pose (Rastreamento com pose conhecida conforme Seção IV do artigo)
+    # Initial Pose
     auto_initialize: true
     global_localization_on_start: false
     initial_pose_x: 11.16

@@ -14,7 +14,7 @@ The algorithm probabilistically estimates the 2D robot pose $(x, y, \theta)$ in 
    * **Gaussian Initialization (`auto_initialize: true`):** Particles are sampled from a Gaussian distribution centered at a user-configured initial pose.
    * **Interactive:** Re-initialized at any time via `/initialpose` (e.g., using the *2D Pose Estimate* tool in RViz).
 2. **Prediction (Motion Model):**
-   * Odometry displacement is accumulated between filter steps. When the robot moves past `update_min_d` or `update_min_a`, the displacement $u_t = (\delta\text{rot}_1, \delta\text{trans}, \delta\text{rot}_2)$ propagates particles using the classical odometry motion model (*sample_motion_model_odometry*, Table 5.6) with Gaussian noise governed by $\alpha_1, \alpha_2, \alpha_3, \alpha_4$.
+   * Scans are buffered until odometry samples bracket the scan timestamp; the robot pose is interpolated at that timestamp before the accumulated displacement is applied. When the robot moves past `update_min_d` or `update_min_a`, the displacement $u_t = (\delta\text{rot}_1, \delta\text{trans}, \delta\text{rot}_2)$ propagates particles using the classical odometry motion model (*sample_motion_model_odometry*, Table 5.6) with Gaussian noise governed by $\alpha_1, \alpha_2, \alpha_3, \alpha_4$.
 3. **Correction (Sensor Model - Likelihood Field):**
    * Projects valid beam endpoints of the current laser scan (`/scan`) into world coordinates and queries obstacle distances via a precomputed Euclidean Distance Field (EDF).
    * Computes measurement likelihood via Gaussian obstacle hit ($z_{\text{hit}}, \sigma_{\text{hit}}$) and uniform random noise ($z_{\text{rand}} / z_{\max}$) in log-space with log-sum-exp normalization (*likelihood_field_range_finder_model*, Table 6.3). Readings at the sensor's maximum range are discarded.
@@ -119,3 +119,15 @@ passes that same seed to MCL, AMCL, MH-MCL, and MH-AMCL. The seed is printed in
 the experiment log and final report. To run the localization launch directly
 with a shared seed, pass `random_seed:=<integer>`; the default `-1` retains
 random-device initialization.
+
+Each localization node also publishes its end-to-end update-cycle duration as
+`std_msgs/msg/Float64` on `/<node_name>/filter_cycle_ms`. The automated runner
+collects these samples and writes `computation_metrics.csv` inside each
+experiment directory and `computation_summary.csv` in the bags directory. The
+reports include sample count, mean, P50/P95/P99/max duration, scan-period P50,
+P95 scan-period utilization, deadline-miss percentage, and updates per second.
+Cycle timing uses a steady clock and includes the filter update, estimate
+calculation, pose/particle publication, and `map -> odom` update.
+The runner keeps the metric collector active until the localization nodes stop,
+then closes the rosbag so its topic counts can be compared with the CSV sample
+counts.

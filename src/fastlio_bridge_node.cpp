@@ -355,6 +355,9 @@ void FastlioBridgeNode::imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg)
 void FastlioBridgeNode::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
 {
   try_resolve_laser_tf(msg->header.frame_id);
+  if (!laser_tf_resolved_ && laser_tf_lookup_attempts_ < 3) {
+    return;
+  }
 
   rclcpp::Time raw_stamp = (msg->header.stamp.sec == 0 && msg->header.stamp.nanosec == 0) ?
     this->now() : rclcpp::Time(msg->header.stamp);

@@ -100,9 +100,13 @@ private:
   int width_{0};
   int height_{0};
   double resolution_{0.05};
+  double inv_resolution_{20.0};
   double origin_x_{0.0};
   double origin_y_{0.0};
   double origin_yaw_{0.0};
+  double cos_origin_yaw_{1.0};
+  double sin_origin_yaw_{0.0};
+  bool zero_origin_yaw_{true};
   double max_distance_{10.0};
   int occupied_thresh_{50};
   int free_thresh_{20};

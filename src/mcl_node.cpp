@@ -1,4 +1,9 @@
 #include "montecarlo_localization/mcl_node.hpp"
+
+#include <algorithm>
+#include <chrono>
+#include <iterator>
+
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
@@ -37,11 +42,11 @@ void MCLNode::setup_node()
     std::bind(&MCLNode::map_callback, this, std::placeholders::_1));
 
   odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-    odom_topic_, 10,
+    odom_topic_, rclcpp::QoS(rclcpp::KeepLast(1)),
     std::bind(&MCLNode::odom_callback, this, std::placeholders::_1));
 
   scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
-    scan_topic_, 10,
+    scan_topic_, rclcpp::QoS(rclcpp::KeepLast(1)),
     std::bind(&MCLNode::scan_callback, this, std::placeholders::_1));
 
   initial_pose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
@@ -51,6 +56,8 @@ void MCLNode::setup_node()
   // Publishers:
   pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(pose_topic_, 10);
   particlecloud_pub_ = this->create_publisher<geometry_msgs::msg::PoseArray>(particlecloud_topic_, 10);
+  cycle_time_pub_ = this->create_publisher<std_msgs::msg::Float64>(
+    "/" + std::string(this->get_name()) + "/filter_cycle_ms", 100);
 
   // TF broadcasting is handled synchronously in odom_callback and scan_callback
   // using sensor message stamps to stay synchronized with the simulation clock.
@@ -216,10 +223,11 @@ void MCLNode::map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
       return;
     }
 
-    // 3. Publish initial state immediately to /particlecloud and /mcl_pose,
-    // allowing the map and particles to be visible in RViz before the robot starts moving.
-    auto est = engine_->get_estimate();
-    publish_pose_and_particles(est, this->now());
+    // 3. Publish initial state immediately if odom stamp is already available
+    if (last_odom_stamp_.nanoseconds() > 0) {
+      auto est = engine_->get_estimate();
+      publish_pose_and_particles(est, last_odom_stamp_);
+    }
   }
 }
 
@@ -247,6 +255,7 @@ void MCLNode::initial_pose_callback(const geometry_msgs::msg::PoseWithCovariance
 
   engine_->init_gaussian(px, py, pyaw, std_x, std_y, std_yaw);
   last_update_odom_pose_ = curr_odom_pose_;
+  pending_scans_.clear();
   force_initial_update_ = true;
   scan_update_count_ = 0;
 
@@ -254,12 +263,12 @@ void MCLNode::initial_pose_callback(const geometry_msgs::msg::PoseWithCovariance
                         last_odom_stamp_ : rclcpp::Time(msg->header.stamp);
   auto est = engine_->get_estimate();
   publish_pose_and_particles(est, stamp);
-  update_map_to_odom_transform(est, stamp);
+  update_map_to_odom_transform(est, stamp, curr_odom_pose_);
 }
 
 void MCLNode::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
 {
-  last_odom_stamp_ = msg->header.stamp;
+  const rclcpp::Time odom_stamp(msg->header.stamp);
   double px = msg->pose.pose.position.x;
   double py = msg->pose.pose.position.y;
   double pyaw = quaternion_to_yaw(
@@ -274,17 +283,31 @@ void MCLNode::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
     prev_odom_pose_ = new_odom;
     curr_odom_pose_ = new_odom;
     last_update_odom_pose_ = new_odom;
+    last_odom_stamp_ = msg->header.stamp;
+    odom_history_.emplace_back(odom_stamp, new_odom);
     has_odom_ = true;
+    return;
+  }
+
+  if (odom_stamp <= rclcpp::Time(last_odom_stamp_)) {
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), *this->get_clock(), 2000,
+      "Ignoring out-of-order odometry timestamp.");
     return;
   }
 
   prev_odom_pose_ = curr_odom_pose_; //current odom becomes previous odometry for next iteration
   curr_odom_pose_ = new_odom; //new odometry is stored
+  last_odom_stamp_ = msg->header.stamp;
+  odom_history_.emplace_back(odom_stamp, new_odom);
+  while (odom_history_.size() > 100) {
+    odom_history_.pop_front();
+  }
 
   // In classical MCL (Probabilistic Robotics Table 8.2), motion prediction is applied
   // once per measurement step with the accumulated displacement since the last update.
-  // Running predict() per odom message causes the effective noise to scale inversely with
-  // the odom rate and injects random angular noise during in-place rotation.
+  // Scans are processed only after odometry brackets their timestamp.
+  process_pending_scans();
   //
   // map->odom is recomputed only upon sensor correction. Between corrections, the cached
   // transform is re-broadcast with a fresh stamp so TF listeners do not time out.
@@ -294,6 +317,10 @@ void MCLNode::odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg)
 void MCLNode::update_laser_offset_from_tf(const std::string & laser_frame)
 {
   if (laser_offset_resolved_) { //To only get the laser offset once
+    return;
+  }
+  if (laser_frame.empty() || laser_frame == base_frame_id_) {
+    laser_offset_resolved_ = true;
     return;
   }
   try {
@@ -323,55 +350,131 @@ void MCLNode::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
 {
   if (!laser_offset_resolved_) { //To only get the laser offset once
     update_laser_offset_from_tf(msg->header.frame_id); //finds the transform from the base frame to the laser frame
+    if (!laser_offset_resolved_) {
+      static int tf_wait_count = 0;
+      if (++tf_wait_count < 3) {
+        return;
+      }
+      laser_offset_resolved_ = true;
+    }
   }
 
-  if (!engine_->is_initialized() || !has_odom_) { //Only updates particles if they're already initialized and they have moved
+  if (!engine_->is_initialized() || !has_odom_) {
     return;
   }
 
-  bool moved = engine_->has_moved(last_update_odom_pose_, curr_odom_pose_);
-
-  // Determine if we should force an update even without movement:
-  // After initialization, do one update to evaluate weights and publish initial pose/TF.
-  // Subsequent updates require actual robot motion (moved == true) to prevent particle deprivation.
-  bool force = false;
-  if (force_initial_update_) {
-    force = true;  // First update after init
+  const rclcpp::Time scan_stamp(msg->header.stamp);
+  if (scan_stamp.nanoseconds() == 0 || scan_stamp <= last_processed_scan_stamp_) {
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), *this->get_clock(), 2000,
+      "Ignoring LaserScan with zero or non-increasing timestamp.");
+    return;
   }
 
-  if (moved || force) {
-    // Apply prediction, measurement weighting, and resampling as one filter iteration.
-    engine_->process_update(last_update_odom_pose_, curr_odom_pose_, *msg);
-    last_update_odom_pose_ = curr_odom_pose_;
-    scan_update_count_++;
+  pending_scans_.push_back(msg);
+  constexpr size_t kMaxPendingScans = 20;
+  if (pending_scans_.size() > kMaxPendingScans) {
+    pending_scans_.pop_front();
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), *this->get_clock(), 2000,
+      "Dropping oldest queued LaserScan because odometry synchronization is falling behind.");
+  }
+  process_pending_scans();
+}
 
-    if (force_initial_update_) {
-      force_initial_update_ = false;
-      RCLCPP_INFO(this->get_logger(), "First sensor update completed. Publishing initial pose estimate.");
+void MCLNode::process_pending_scans()
+{
+  while (!pending_scans_.empty()) {
+    const auto & scan = pending_scans_.front();
+    const rclcpp::Time scan_stamp(scan->header.stamp);
+    if (odom_history_.empty() || scan_stamp > odom_history_.back().first) {
+      return;
     }
 
-    auto est = engine_->get_estimate();
-
-    if (global_localization_on_start_ && (scan_update_count_ % 10 == 0)) {
-      RCLCPP_INFO(this->get_logger(),
-        "Global localization progress: %d updates, current estimate: (%.2f, %.2f, %.2f)",
-        scan_update_count_, est.pose.x, est.pose.y, est.pose.theta);
+    Pose2D scan_odom_pose;
+    if (!interpolate_odom_pose(scan_stamp, scan_odom_pose)) {
+      pending_scans_.pop_front();
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 2000,
+        "Dropping LaserScan because its timestamp is outside the retained odometry history.");
+      continue;
     }
+    pending_scans_.pop_front();
+    last_processed_scan_stamp_ = scan_stamp;
 
-    publish_pose_and_particles(est, msg->header.stamp);
+    const bool moved = engine_->has_moved(last_update_odom_pose_, scan_odom_pose);
+    if (moved || force_initial_update_) {
+      const auto cycle_start = std::chrono::steady_clock::now();
+      engine_->process_update(last_update_odom_pose_, scan_odom_pose, *scan);
+      last_update_odom_pose_ = scan_odom_pose;
+      scan_update_count_++;
 
-    // Recompute map->odom transform from the corrected estimate
-    update_map_to_odom_transform(est, msg->header.stamp);
-  } else {
-    // Keep /mcl_pose and /particlecloud active at ~5 Hz even when stationary
-    static int stationary_pub_counter = 0;
-    if (++stationary_pub_counter % 6 == 0) {
-      publish_pose_and_particles(engine_->get_estimate(), msg->header.stamp);
+      if (force_initial_update_) {
+        force_initial_update_ = false;
+        RCLCPP_INFO(
+          this->get_logger(), "First timestamp-synchronized sensor update completed.");
+      }
+
+      const auto est = engine_->get_estimate();
+      if (global_localization_on_start_ && (scan_update_count_ % 10 == 0)) {
+        RCLCPP_INFO(
+          this->get_logger(),
+          "Global localization progress: %d updates, current estimate: (%.2f, %.2f, %.2f)",
+          scan_update_count_, est.pose.x, est.pose.y, est.pose.theta);
+      }
+
+      publish_pose_and_particles(est, scan->header.stamp);
+      update_map_to_odom_transform(est, scan_stamp, scan_odom_pose);
+
+      std_msgs::msg::Float64 cycle_time_msg;
+      cycle_time_msg.data = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - cycle_start).count();
+      cycle_time_pub_->publish(cycle_time_msg);
+    } else {
+      static int stationary_pub_counter = 0;
+      if (++stationary_pub_counter % 6 == 0) {
+        publish_pose_and_particles(engine_->get_estimate(), scan->header.stamp);
+      }
     }
   }
 }
 
-void MCLNode::update_map_to_odom_transform(const PoseEstimate & est, const rclcpp::Time & stamp)
+bool MCLNode::interpolate_odom_pose(const rclcpp::Time & stamp, Pose2D & pose) const
+{
+  if (odom_history_.empty() || stamp < odom_history_.front().first ||
+    stamp > odom_history_.back().first)
+  {
+    return false;
+  }
+
+  const auto upper = std::lower_bound(
+    odom_history_.begin(), odom_history_.end(), stamp,
+    [](const auto & sample, const rclcpp::Time & target) {
+      return sample.first < target;
+    });
+  if (upper == odom_history_.end()) {
+    return false;
+  }
+  if (upper->first == stamp || upper == odom_history_.begin()) {
+    pose = upper->second;
+    return true;
+  }
+
+  const auto lower = std::prev(upper);
+  const double interval = (upper->first - lower->first).seconds();
+  if (interval <= 0.0) {
+    return false;
+  }
+  const double fraction = (stamp - lower->first).seconds() / interval;
+  pose.x = lower->second.x + fraction * (upper->second.x - lower->second.x);
+  pose.y = lower->second.y + fraction * (upper->second.y - lower->second.y);
+  pose.theta = normalize_angle(
+    lower->second.theta + fraction * angle_diff(upper->second.theta, lower->second.theta));
+  return true;
+}
+
+void MCLNode::update_map_to_odom_transform(
+  const PoseEstimate & est, const rclcpp::Time & stamp, const Pose2D & odom_pose)
 {
   if (!publish_tf_ || !has_odom_) { //Only publishes the transform if the flag is true and they have odom
     return;
@@ -381,12 +484,12 @@ void MCLNode::update_map_to_odom_transform(const PoseEstimate & est, const rclcp
   // T_odom_base: robot pose in odom frame (from curr_odom_pose_)
   // T_map_odom = T_map_base * inv(T_odom_base)
 
-  double theta_diff = angle_diff(est.pose.theta, curr_odom_pose_.theta);
+  double theta_diff = angle_diff(est.pose.theta, odom_pose.theta);
   double cos_diff = std::cos(theta_diff);
   double sin_diff = std::sin(theta_diff);
 
-  double map_to_odom_x = est.pose.x - (curr_odom_pose_.x * cos_diff - curr_odom_pose_.y * sin_diff);
-  double map_to_odom_y = est.pose.y - (curr_odom_pose_.x * sin_diff + curr_odom_pose_.y * cos_diff);
+  double map_to_odom_x = est.pose.x - (odom_pose.x * cos_diff - odom_pose.y * sin_diff);
+  double map_to_odom_y = est.pose.y - (odom_pose.x * sin_diff + odom_pose.y * cos_diff);
 
   map_to_odom_tf_.header.frame_id = global_frame_id_;
   map_to_odom_tf_.child_frame_id = odom_frame_id_;

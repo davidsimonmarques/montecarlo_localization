@@ -57,23 +57,33 @@ void Resampler::update_recovery_weights(double avg_likelihood)
   //   w_slow_ too low (which would disable recovery when stuck in a wrong room with avg_likelihood ~0.25).
   // - Caps w_slow_ when well-localized so normal geometry variations on turns (e.g. 1.4 -> 0.85)
   //   do not falsely trigger random particle injection after convergence.
-  constexpr double kConvergedReferenceCap = 0.38;
   if (!initialized_) {
-    w_slow_ = (avg_likelihood > 0.0) ? std::max(avg_likelihood, 0.34) : 1.0;
-    w_slow_ = std::min(w_slow_, kConvergedReferenceCap);
-    w_fast_ = avg_likelihood;
+    if (global_mode_) {
+      // Global localization start: set w_slow_ above wrong-room likelihoods (~0.18-0.25)
+      // so recovery stays active until convergence.
+      w_slow_ = (avg_likelihood > 0.0) ? std::max(avg_likelihood, 0.34) : 1.0;
+      w_slow_ = std::min(w_slow_, 0.38);
+      w_fast_ = avg_likelihood;
+    } else {
+      // Local pose tracking start: cap w_slow_ at 0.12 so normal corridor turns do not
+      // falsely trigger random particle injection when starting from a known pose.
+      w_slow_ = (avg_likelihood > 0.0) ? std::min(avg_likelihood, 0.12) : 0.12;
+      w_fast_ = std::max(avg_likelihood, w_slow_);
+    }
     initialized_ = true;
     return;
   }
 
-  const double target_slow = std::min(avg_likelihood, kConvergedReferenceCap);
+  const double reference_cap = global_mode_ ? 0.38 : 0.12;
+  const double target_slow = std::min(avg_likelihood, reference_cap);
   w_slow_ += params_.alpha_slow * (target_slow - w_slow_);
   w_fast_ += params_.alpha_fast * (avg_likelihood - w_fast_);
 }
 
-void Resampler::reset_recovery()
+void Resampler::reset_recovery(bool global_mode)
 {
   initialized_ = false;
+  global_mode_ = global_mode;
   w_slow_ = 0.0;
   w_fast_ = 0.0;
 }
@@ -135,7 +145,10 @@ void Resampler::resample(
     out_particles[m] = in_particles[i];
     out_particles[m].weight = inv_m;
 
-    if (map_model.is_loaded() && !map_model.is_free_position(out_particles[m].x, out_particles[m].y)) {
+    const bool invalid_pose = global_mode_ ?
+      !map_model.is_free_position(out_particles[m].x, out_particles[m].y) :
+      !map_model.is_in_bounds(out_particles[m].x, out_particles[m].y);
+    if (map_model.is_loaded() && invalid_pose) {
       double rx = 0.0, ry = 0.0;
       if (map_model.sample_free_space(rx, ry, rng)) {
         out_particles[m].x = rx;

@@ -3,12 +3,15 @@
 
 #include <memory>
 #include <string>
+#include <deque>
+#include <utility>
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <geometry_msgs/msg/pose_array.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <std_msgs/msg/float64.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -32,12 +35,15 @@ protected:
   virtual void map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg);
   virtual void odom_callback(const nav_msgs::msg::Odometry::SharedPtr msg);
   virtual void scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg);
+  void process_pending_scans();
+  bool interpolate_odom_pose(const rclcpp::Time & stamp, Pose2D & pose) const;
   virtual void initial_pose_callback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg);
   virtual void timer_tf_callback();
 
   virtual void update_laser_offset_from_tf(const std::string & laser_frame);
   virtual void publish_pose_and_particles(const PoseEstimate & est, const rclcpp::Time & stamp);
-  virtual void update_map_to_odom_transform(const PoseEstimate & est, const rclcpp::Time & stamp);
+  virtual void update_map_to_odom_transform(
+    const PoseEstimate & est, const rclcpp::Time & stamp, const Pose2D & odom_pose);
   virtual void send_map_to_odom(const rclcpp::Time & stamp);
 
   // Engine instance as unique_ptr for polymorphic dispatch (MCL or AMCL)
@@ -61,6 +67,9 @@ protected:
   Pose2D prev_odom_pose_;
   Pose2D curr_odom_pose_;
   Pose2D last_update_odom_pose_;
+  std::deque<std::pair<rclcpp::Time, Pose2D>> odom_history_;
+  std::deque<sensor_msgs::msg::LaserScan::SharedPtr> pending_scans_;
+  rclcpp::Time last_processed_scan_stamp_{0, 0, RCL_ROS_TIME};
 
   // TF
   bool publish_tf_{true};
@@ -80,6 +89,7 @@ protected:
 
   rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr pose_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseArray>::SharedPtr particlecloud_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr cycle_time_pub_;
 
   rclcpp::TimerBase::SharedPtr tf_timer_;
 

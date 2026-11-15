@@ -150,14 +150,39 @@ void AMCLEngine::init_gaussian(
   const int count = amcl_params_.enable_kld ? amcl_params_.min_particles : amcl_params_.num_particles;
   particles_.reserve(static_cast<size_t>(count));
 
-  std::normal_distribution<double> dist_x(mean_x, std::max(1e-4, std_x));
-  std::normal_distribution<double> dist_y(mean_y, std::max(1e-4, std_y));
-  std::normal_distribution<double> dist_yaw(mean_yaw, std::max(1e-4, std_yaw));
+  const double scale = map_model_.is_loaded() ? 0.40 : 1.0;
+  std::normal_distribution<double> dist_x(mean_x, std::max(1e-4, std_x * scale));
+  std::normal_distribution<double> dist_y(mean_y, std::max(1e-4, std_y * scale));
+  std::normal_distribution<double> dist_yaw(mean_yaw, std::max(1e-4, std_yaw * scale));
 
   const double initial_weight = 1.0 / static_cast<double>(count);
   for (int i = 0; i < count; ++i) {
-    particles_.emplace_back(
-      dist_x(rng_), dist_y(rng_), normalize_angle(dist_yaw(rng_)), initial_weight);
+    double px = dist_x(rng_);
+    double py = dist_y(rng_);
+    double pyaw = normalize_angle(dist_yaw(rng_));
+
+    if (map_model_.is_loaded()) {
+      int attempts = 0;
+      while (
+        (!map_model_.is_free_position(px, py) ||
+        map_model_.get_distance_to_obstacle(px, py) <= 0.09) &&
+        attempts < 100)
+      {
+        px = dist_x(rng_);
+        py = dist_y(rng_);
+        attempts++;
+      }
+      if (!map_model_.is_free_position(px, py)) {
+        if (map_model_.is_free_position(mean_x, mean_y)) {
+          px = mean_x;
+          py = mean_y;
+        } else {
+          map_model_.sample_free_space(px, py, rng_);
+        }
+      }
+    }
+
+    particles_.emplace_back(px, py, pyaw, initial_weight);
   }
 
   resampler_.reset_recovery();
@@ -187,7 +212,7 @@ bool AMCLEngine::init_global()
     particles_.emplace_back(x, y, dist_yaw(rng_), initial_weight);
   }
 
-  resampler_.reset_recovery();
+  resampler_.reset_recovery(true);
   is_initialized_ = true;
   return true;
 }
@@ -202,11 +227,23 @@ void AMCLEngine::process_update(
   }
 
   // When enable_kld is false, execute exact Algorithm 1 from Villela et al. (IEEE DASC 2025):
-  // 1. Motion model prediction for all M particles
+  // 1. Motion model prediction for all M particles (with adaptive covariance contraction when tracking)
   // 2. Sensor likelihood weighting and w_slow / w_fast recovery filter update
   // 3. Mixed Resampling (Algorithm 1, lines 12-19) with fixed M particles
   if (!amcl_params_.enable_kld) {
-    MCLEngine::process_update(prev_odom, curr_odom, scan);
+    if (!resampler_.is_global_mode()) {
+      const auto orig_mp = motion_model_.get_parameters();
+      MotionParameters local_mp = orig_mp;
+      local_mp.alpha1 *= 0.33;
+      local_mp.alpha2 *= 0.33;
+      local_mp.alpha3 *= 0.33;
+      local_mp.alpha4 *= 0.33;
+      motion_model_.set_parameters(local_mp);
+      MCLEngine::process_update(prev_odom, curr_odom, scan);
+      motion_model_.set_parameters(orig_mp);
+    } else {
+      MCLEngine::process_update(prev_odom, curr_odom, scan);
+    }
     return;
   }
 

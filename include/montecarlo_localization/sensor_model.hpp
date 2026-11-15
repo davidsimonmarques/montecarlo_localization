@@ -83,6 +83,9 @@ public:
 
 private:
   SensorParameters params_;
+  std::vector<double> log_prob_lut_;
+  double lut_inv_step_{2000.0};
+  double min_log_prob_{-10.0};
 };
 
 }  // namespace montecarlo_localization

@@ -11,6 +11,7 @@ namespace montecarlo_localization
 SensorModel::SensorModel()
 : params_{}
 {
+  set_parameters(params_);
 }
 
 SensorModel::SensorModel(const SensorParameters & params)
@@ -33,6 +34,21 @@ void SensorModel::set_parameters(const SensorParameters & params)
             "Sensor parameters require valid ranges, positive sigma_hit, and mixture weights summing to one");
   }
   params_ = params;
+
+  const double random_density = params_.z_rand / params_.max_range;
+  const double hit_gaussian_factor = 1.0 / (std::sqrt(2.0 * M_PI) * params_.sigma_hit);
+  const double two_sigma_sq = 2.0 * params_.sigma_hit * params_.sigma_hit;
+  lut_inv_step_ = 2000.0;  // 0.5 mm step
+  const size_t lut_size = 6001;  // Up to 3.0 meters
+  log_prob_lut_.resize(lut_size);
+  for (size_t i = 0; i < lut_size; ++i) {
+    const double d = static_cast<double>(i) / lut_inv_step_;
+    const double p_hit = hit_gaussian_factor * std::exp(-(d * d) / two_sigma_sq);
+    const double p_total = params_.z_hit * p_hit + random_density;
+    log_prob_lut_[i] = (p_total > 0.0) ? std::log(p_total) : -std::numeric_limits<double>::infinity();
+  }
+  min_log_prob_ = (random_density > 0.0) ?
+    std::log(random_density) : -std::numeric_limits<double>::infinity();
 }
 
 SensorModel::PreparedScan SensorModel::prepare_scan(
@@ -108,10 +124,21 @@ double SensorModel::log_likelihood(
   }
 
   double log_probability = 0.0;
+  const size_t lut_limit = log_prob_lut_.size();
+  const bool use_lut = (lut_limit > 0 && params_.sigma_hit <= 0.5);
   for (const auto & beam : scan.beams) {
     const double endpoint_x = laser_x + beam.local_x * cos_laser - beam.local_y * sin_laser;
     const double endpoint_y = laser_y + beam.local_x * sin_laser + beam.local_y * cos_laser;
     const double distance = map_model.get_distance_to_obstacle(endpoint_x, endpoint_y);
+    if (use_lut && distance >= 0.0) {
+      const size_t idx = static_cast<size_t>(distance * lut_inv_step_ + 0.5);
+      const double lp = (idx < lut_limit) ? log_prob_lut_[idx] : min_log_prob_;
+      if (!std::isfinite(lp)) {
+        return -std::numeric_limits<double>::infinity();
+      }
+      log_probability += lp;
+      continue;
+    }
     const double p_hit = scan.hit_gaussian_factor *
       std::exp(-(distance * distance) / scan.two_sigma_sq);
     const double p_total = params_.z_hit * p_hit + scan.random_density;

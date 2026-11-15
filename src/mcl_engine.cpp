@@ -129,13 +129,17 @@ void MCLEngine::init_gaussian(
 
     if (map_model_.is_loaded()) {
       int attempts = 0;
-      while (!map_model_.is_in_bounds(px, py) && attempts < 100) {
+      while (
+        (!map_model_.is_free_position(px, py) ||
+        map_model_.get_distance_to_obstacle(px, py) <= 0.09) &&
+        attempts < 100)
+      {
         px = dist_x(rng_);
         py = dist_y(rng_);
         attempts++;
       }
-      if (!map_model_.is_in_bounds(px, py)) {
-        if (map_model_.is_in_bounds(mean_x, mean_y)) {
+      if (!map_model_.is_free_position(px, py)) {
+        if (map_model_.is_free_position(mean_x, mean_y)) {
           px = mean_x;
           py = mean_y;
         } else {
@@ -173,7 +177,7 @@ bool MCLEngine::init_global()
     particles_.emplace_back(px, py, pyaw, initial_weight);
   }
 
-  resampler_.reset_recovery();
+  resampler_.reset_recovery(true);
   update_count_ = 0;
   is_initialized_ = true;
   return true;
@@ -191,13 +195,16 @@ void MCLEngine::predict(const Pose2D & prev_odom, const Pose2D & curr_odom)
 
   std::uniform_real_distribution<double> dist_u(0.0, 1.0);
   std::uniform_real_distribution<double> dist_yaw(-M_PI, M_PI);
-  const double wall_respawn_prob = params_.resample_params.enable_recovery ? 0.25 : 0.04;
+  const bool is_lost = resampler_.is_global_mode();
+  const double wall_respawn_prob = is_lost ?
+    (params_.resample_params.enable_recovery ? 0.25 : 0.04) : 0.0;
 
   for (size_t i = 0; i < particles_.size(); ++i) {
     const Particle base = particles_[i];
     Particle cand = base;
     bool valid = false;
-    for (int attempt = 0; attempt < 2; ++attempt) {
+    const int max_attempts = is_lost ? 2 : 5;
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
       cand = base;
       motion_model_.predict(cand, prev_odom, curr_odom, rng_);
       if (map_model_.is_free_position(cand.x, cand.y) &&
