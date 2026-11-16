@@ -1,0 +1,371 @@
+# ==============================================================================
+# Parâmetros Integrados: FAST-LIO2 + 4 Algoritmos de Localização (MCL, AMCL, MH-MCL, MH-AMCL)
+# ==============================================================================
+# Estratégia:
+# 1. fastlio_bridge_node converte /scan (LaserScan 2D) + /imu/data em uma nuvem
+#    pseudo-3D estruturada (/fastlio2/scan_cloud) e garante gravidade/timestamps monotônicos.
+# 2. laser_mapping (pacote fast_lio / FAST_LIO_ROS2) estima a odometria LiDAR-Inercial
+#    em /Odometry (camera_init -> body).
+# 3. fastlio_bridge_node transforma /Odometry para o referencial do robô em /fastlio2/odom
+#    (odom -> base_footprint) e publica a TF odom -> base_footprint.
+# 4. Os 4 métodos de localização consomem /fastlio2/odom no modelo de predição.
+# ==============================================================================
+
+fastlio_bridge_node:
+  ros__parameters:
+    # Tópicos de entrada (sensores do robô no CoppeliaSim)
+    scan_topic: "/scan"
+    imu_topic: "/imu/data"
+
+    # Tópicos intermediários para alimentar o algoritmo FAST-LIO2
+    cloud_out_topic: "/fastlio2/scan_cloud"
+    imu_out_topic: "/fastlio2/imu"
+
+    # [ATENÇÃO - NÃO ALTERAR!]
+    # fastlio_odom_in_topic é a saída interna gerada pelo nó laser_mapping do FAST-LIO2 (em camera_init).
+    # NÃO mude para /odom, senão a bridge escutará as rodas em vez do algoritmo do FAST-LIO2!
+    fastlio_odom_in_topic: "/Odometry"
+
+    # Tópico de saída onde a bridge publica a odometria estimada pelo FAST-LIO2 (odom -> base_footprint):
+    odom_out_topic: "/fastlio2/odom"
+
+    # Frames da árvore de TF (map -> odom -> base_footprint -> base_link -> sensores)
+    odom_frame_id: "odom"
+    base_frame_id: "base_footprint"
+    fastlio_world_frame_id: "camera_init"
+    publish_odom_tf: true        # Desative a TF wheel odom -> base_footprint no CoppeliaSim
+
+    # Extrusão vertical 2.5D + plano de piso sintético para estabilidade 6-DOF no FAST-LIO2
+    vertical_layers: 5
+    vertical_z_min: -0.30
+    vertical_z_max: 0.30
+    enable_ground_plane: true
+    ground_z: -0.60
+    min_range: 0.105
+    max_range: 9.95
+    max_range_margin: 0.05       # Filtra leituras de espaço livre (range == range_max no CoppeliaSim)
+    stamp_offset_sec: 0.001      # Garante imu_time < lidar_end_time no sync_packages do FAST-LIO2
+
+    # Proteção automática caso a IMU simulada omita o vetor de reação gravitacional (+9.81 m/s^2)
+    ensure_imu_gravity: true
+    gravity_mps2: 9.81
+
+    # Extrínsecos de fallback em relação ao base_link (sobrescritos automaticamente se existirem na TF)
+    laser_offset_x: 0.0
+    laser_offset_y: 0.0
+    laser_offset_z: 0.0
+    laser_offset_roll: 0.0
+    laser_offset_pitch: 0.0
+    laser_offset_yaw: 0.0
+
+    imu_offset_x: 0.0
+    imu_offset_y: 0.0
+    imu_offset_z: 0.0
+    imu_offset_roll: 0.0
+    imu_offset_pitch: 0.0
+    imu_offset_yaw: 0.0
+
+
+laser_mapping:
+  ros__parameters:
+    feature_extract_enable: false
+    point_filter_num: 1
+    max_iteration: 4
+    filter_size_corner: 0.10
+    filter_size_surf: 0.10
+    filter_size_map: 0.10
+    cube_side_length: 200.0
+    runtime_pos_log_enable: false
+    map_file_path: ""
+
+    common:
+      lid_topic: "/fastlio2/scan_cloud"
+      imu_topic: "/fastlio2/imu"
+      time_sync_en: false
+      time_offset_lidar_to_imu: 0.0
+
+    preprocess:
+      lidar_type: 0              # 0 aciona default_handler (PointCloud2 PointXYZI pré-convertida)
+      scan_line: 5
+      scan_rate: 20
+      timestamp_unit: 0
+      blind: 0.15
+
+    mapping:
+      acc_cov: 0.05
+      gyr_cov: 0.05
+      b_acc_cov: 0.0001
+      b_gyr_cov: 0.0001
+      fov_degree: 360.0
+      det_range: 50.0
+      extrinsic_est_en: false    # Nuvem já transformada para o frame da IMU pelo fastlio_bridge_node
+      extrinsic_T: [0.0, 0.0, 0.0]
+      extrinsic_R: [1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0]
+
+    publish:
+      path_en: false             # Desativado para não conflitar com /path do controlador FBL
+      effect_map_en: false
+      map_en: false
+      scan_publish_en: true
+      dense_publish_en: false
+      scan_bodyframe_pub_en: false
+
+    pcd_save:
+      pcd_save_en: false
+      interval: -1
+
+
+montecarlo_localization_node:
+  ros__parameters:
+    # Frame IDs
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+
+    # Topics
+    scan_topic: "/scan"
+    map_topic: "/map"
+    odom_topic: "/fastlio2/odom"  # Consome a odometria do FAST-LIO2 para a predição de movimento
+    pose_topic: "/mcl_pose"
+    particlecloud_topic: "/particlecloud"
+
+    # TF Publishing (apenas o MCL publica map -> odom quando os 4 rodam juntos)
+    publish_tf: true
+
+    # Filter Particle Parameters
+    num_particles: 12000
+    update_min_d: 0.05
+    update_min_a: 0.05
+    resample_on_update: true
+    resample_interval: 1
+    selective_resampling: true
+    resample_threshold_ratio: 0.5
+
+    # Odometry Motion Model Noise Parameters (calibrados para FAST-LIO2)
+    alpha1: 0.01
+    alpha2: 0.005
+    alpha3: 0.01
+    alpha4: 0.005
+
+    # Sensor Model Parameters (Likelihood Field para LaserScan)
+    z_hit: 0.90
+    z_rand: 0.10
+    sigma_hit: 0.20
+    min_range: 0.10
+    max_range: 5.0
+    beam_skip: 1
+    max_beams: 80
+
+    # Augmented MCL Recovery (desativado no MCL padrão)
+    enable_recovery: false
+    alpha_slow: 0.001
+    alpha_fast: 0.02
+    recovery_max_prob: 0.05
+
+    # Initial Pose
+    auto_initialize: true
+    global_localization_on_start: false
+    initial_pose_x: 11.16
+    initial_pose_y: -8.77
+    initial_pose_yaw: -3.1232
+    initial_cov_x: 0.01
+    initial_cov_y: 0.01
+    initial_cov_yaw: 0.068
+
+
+amcl_node:
+  ros__parameters:
+    # Frame IDs
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+
+    # Topics
+    scan_topic: "/scan"
+    map_topic: "/map"
+    odom_topic: "/fastlio2/odom"  # Consome a odometria do FAST-LIO2 para a predição de movimento
+    pose_topic: "/amcl_pose"
+    particlecloud_topic: "/amcl_particlecloud"
+
+    # TF Publishing (desativado em execução paralela para evitar conflito com MCL)
+    publish_tf: false
+
+    # Particle Count Configuration (alinhado ao artigo Villela et al. IEEE DASC 2025)
+    enable_kld: false           # Desativa variação KLD para operar com N fixo como no artigo
+    num_particles: 12000        # 12.000 partículas (idêntico ao MCL e MH-MCL para comparação justa)
+
+    # KLD-Sampling Adaptive Particle Filter Parameters (ativado apenas se enable_kld: true)
+    min_particles: 3000
+    max_particles: 12000
+    kld_err: 0.05
+    kld_z: 2.32635
+    spatial_resolution_x: 0.5
+    spatial_resolution_y: 0.5
+    spatial_resolution_theta: 0.087
+
+    update_min_d: 0.05
+    update_min_a: 0.05
+    resample_on_update: true
+    resample_interval: 1
+    selective_resampling: true
+    resample_threshold_ratio: 0.5
+
+    # Odometry Motion Model Noise Parameters (calibrados para FAST-LIO2)
+    alpha1: 0.01
+    alpha2: 0.005
+    alpha3: 0.01
+    alpha4: 0.005
+
+    # Sensor Model Parameters
+    z_hit: 0.90
+    z_rand: 0.10
+    sigma_hit: 0.20
+    min_range: 0.10
+    max_range: 5.0
+    beam_skip: 1
+    max_beams: 80
+
+    # Augmented MCL Recovery
+    enable_recovery: false
+    alpha_slow: 0.001
+    alpha_fast: 0.02
+    recovery_max_prob: 0.02
+
+    # Initial Pose
+    auto_initialize: true
+    global_localization_on_start: false
+    initial_pose_x: 11.16
+    initial_pose_y: -8.77
+    initial_pose_yaw: -3.1232
+    initial_cov_x: 0.01
+    initial_cov_y: 0.01
+    initial_cov_yaw: 0.068
+
+
+mhmcl_node:
+  ros__parameters:
+    # Frame IDs
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+
+    # Topics
+    scan_topic: "/scan"
+    map_topic: "/map"
+    odom_topic: "/fastlio2/odom"  # Consome a odometria do FAST-LIO2 para a predição de movimento
+    pose_topic: "/mhmcl_pose"
+    particlecloud_topic: "/mhmcl_particlecloud"
+
+    # TF Publishing
+    publish_tf: false
+
+    # Filter Particle Parameters
+    num_particles: 12000
+    update_min_d: 0.05
+    update_min_a: 0.05
+    resample_on_update: true
+    resample_interval: 1
+    selective_resampling: true
+    resample_threshold_ratio: 0.5
+
+    # Odometry Motion Model Noise Parameters (calibrados para FAST-LIO2)
+    alpha1: 0.01
+    alpha2: 0.005
+    alpha3: 0.01
+    alpha4: 0.005
+
+    # Sensor Model Parameters
+    z_hit: 0.90
+    z_rand: 0.10
+    sigma_hit: 0.20
+    min_range: 0.10
+    max_range: 5.0
+    beam_skip: 1
+    max_beams: 80
+
+    # Recovery (desativado no MH-MCL, conforme Algoritmo 3 linha 20 de Villela et al. 2025)
+    enable_recovery: false
+    alpha_slow: 0.001
+    alpha_fast: 0.02
+    recovery_max_prob: 0.05
+
+    # Initial Pose
+    auto_initialize: true
+    global_localization_on_start: false
+    initial_pose_x: 11.16
+    initial_pose_y: -8.77
+    initial_pose_yaw: -3.1232
+    initial_cov_x: 0.01
+    initial_cov_y: 0.01
+    initial_cov_yaw: 0.068
+
+
+mhamcl_node:
+  ros__parameters:
+    # Frame IDs
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+
+    # Topics
+    scan_topic: "/scan"
+    map_topic: "/map"
+    odom_topic: "/fastlio2/odom"  # Consome a odometria do FAST-LIO2 para a predição de movimento
+    pose_topic: "/mhamcl_pose"
+    particlecloud_topic: "/mhamcl_particlecloud"
+
+    # TF Publishing
+    publish_tf: false
+
+    # Particle Count Configuration (alinhado ao artigo Villela et al. IEEE DASC 2025)
+    enable_kld: false           # Desativa variação KLD para operar com N fixo como no artigo
+    num_particles: 12000        # 12.000 partículas (idêntico ao MCL e MH-MCL para comparação justa)
+
+    # KLD-Sampling Adaptive Particle Parameters (ativado apenas se enable_kld: true)
+    min_particles: 3000
+    max_particles: 12000
+    kld_err: 0.05
+    kld_z: 2.32635
+    spatial_resolution_x: 0.5
+    spatial_resolution_y: 0.5
+    spatial_resolution_theta: 0.087
+
+    update_min_d: 0.05
+    update_min_a: 0.05
+    resample_on_update: true
+    resample_interval: 1
+    selective_resampling: true
+    resample_threshold_ratio: 0.5
+
+    # Odometry Motion Model Noise Parameters (calibrados para FAST-LIO2)
+    alpha1: 0.01
+    alpha2: 0.005
+    alpha3: 0.01
+    alpha4: 0.005
+
+    # Sensor Model Parameters
+    z_hit: 0.90
+    z_rand: 0.10
+    sigma_hit: 0.20
+    min_range: 0.10
+    max_range: 5.0
+    beam_skip: 1
+    max_beams: 80
+
+    # Mixed Resampling with recovery
+    enable_recovery: false
+    alpha_slow: 0.001
+    alpha_fast: 0.02
+    recovery_max_prob: 0.02
+
+    # Initial Pose
+    auto_initialize: true
+    global_localization_on_start: false
+    initial_pose_x: 11.16
+    initial_pose_y: -8.77
+    initial_pose_yaw: -3.1232
+    initial_cov_x: 0.01
+    initial_cov_y: 0.01
+    initial_cov_yaw: 0.068

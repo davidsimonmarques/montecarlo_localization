@@ -44,7 +44,7 @@ The algorithm probabilistically estimates the 2D robot pose $(x, y, \theta)$ in 
 | `/particlecloud` | `geometry_msgs/msg/PoseArray` | Sample of active particles for visualization in RViz. |
 
 ### Transform Tree (TF):
-* **Required Inputs:** `odom -> base_link` (or `odom -> base_footprint -> base_link`) and `base_link -> base_scan`.
+* **Required Inputs:** `odom -> base_link` or `odom -> base_footprint -> base_link`, plus `base_link -> base_scan`. With FAST-LIO2, the bridge publishes `odom -> base_footprint`; disable the simulator's wheel-based `odom -> base_footprint` TF to avoid competing transforms.
 * **Broadcast by Node:** **`map -> odom`**.
 
 ---
@@ -119,3 +119,21 @@ passes that same seed to MCL, AMCL, MH-MCL, and MH-AMCL. The seed is printed in
 the experiment log and final report. To run the localization launch directly
 with a shared seed, pass `random_seed:=<integer>`; the default `-1` retains
 random-device initialization.
+
+The runner defaults to wheel odometry (`/odom`). To run the FAST-LIO2 bridge and
+use its `/fastlio2/odom` output for all four filters, select `odom_source:=fastlio2`:
+```bash
+ros2 launch montecarlo_localization automated_experiments_launch.py odom_source:=fastlio2
+```
+The equivalent direct-script option is `--odom-source fastlio2`; `wheel` is the
+default. FAST-LIO2 mode requires the `fast_lio` package and CoppeliaSim's
+`/scan` and `/imu/data` topics. The runner waits for `/fastlio2/odom` before it
+starts the experiment, and reports a startup failure instead of silently
+continuing without that odometry.
+
+Each localization node publishes its filter-update duration in milliseconds on
+`/<node_name>/filter_cycle_ms`. The measurement uses a monotonic clock around
+the filter update and pose estimate calculation; it excludes ROS publishing and
+TF broadcasting. Automated experiments record these topics in the bag and read
+them afterward to generate `computation_metrics.csv` and
+`computation_summary.csv`.

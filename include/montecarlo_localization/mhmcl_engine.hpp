@@ -13,7 +13,7 @@ namespace montecarlo_localization
  *         in ROS-Based Robotics"
  *
  * Algorithm 3 (MCL branch):
- * - Samples candidate particles from motion model
+ * - Samples candidate particles from the odometry motion model
  * - Computes observation likelihood of proposed pose and previous pose
  * - Accepts or rejects proposed state using Metropolis-Hastings ratio alpha = min(1, w_prop / w_prev)
  * - Normalizes weights
@@ -36,14 +36,17 @@ public:
     const sensor_msgs::msg::LaserScan & scan) override;
 
 protected:
+  void predict_mh_proposal(const Pose2D & prev_odom, const Pose2D & curr_odom);
+
   /**
    * @brief Applies the Metropolis-Hastings sampling step across all particles.
    *        Returns the computed average observation likelihood.
    */
   virtual double apply_metropolis_hastings(
-    const Pose2D & prev_odom,
-    const Pose2D & curr_odom,
     const SensorModel::PreparedScan & prepared_scan);
+
+private:
+  std::vector<Particle> previous_particles_;
 };
 
 }  // namespace montecarlo_localization

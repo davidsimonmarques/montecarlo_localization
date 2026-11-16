@@ -18,6 +18,30 @@ MHMCLEngine::MHMCLEngine(const MCLParameters & params)
 {
 }
 
+void MHMCLEngine::predict_mh_proposal(const Pose2D & prev_odom, const Pose2D & curr_odom)
+{
+  previous_particles_ = particles_;
+
+  for (size_t i = 0; i < particles_.size(); ++i) {
+    const Particle & base = previous_particles_[i];
+    bool valid = false;
+    for (int attempt = 0; attempt < 25; ++attempt) {
+      Particle candidate = base;
+      motion_model_.predict(candidate, prev_odom, curr_odom, rng_);
+      if (map_model_.is_free_position(candidate.x, candidate.y) &&
+        map_model_.get_distance_to_obstacle(candidate.x, candidate.y) > 0.09)
+      {
+        particles_[i] = candidate;
+        valid = true;
+        break;
+      }
+    }
+    if (!valid) {
+      particles_[i] = base;
+    }
+  }
+}
+
 void MHMCLEngine::process_update(
   const Pose2D & prev_odom,
   const Pose2D & curr_odom,
@@ -27,8 +51,9 @@ void MHMCLEngine::process_update(
     return;
   }
 
+  predict_mh_proposal(prev_odom, curr_odom);
   const SensorModel::PreparedScan prepared_scan = sensor_model_.prepare_scan(scan);
-  const double avg_likelihood = apply_metropolis_hastings(prev_odom, curr_odom, prepared_scan);
+  const double avg_likelihood = apply_metropolis_hastings(prepared_scan);
   resampler_.update_recovery_weights(avg_likelihood);
   update_count_++;
 
@@ -50,150 +75,114 @@ void MHMCLEngine::process_update(
 }
 
 double MHMCLEngine::apply_metropolis_hastings(
-  const Pose2D & prev_odom,
-  const Pose2D & curr_odom,
   const SensorModel::PreparedScan & prepared_scan)
 {
   const size_t n_particles = particles_.size();
-  std::vector<double> log_obs(n_particles, -std::numeric_limits<double>::infinity());
-  std::vector<double> log_joint(n_particles, -std::numeric_limits<double>::infinity());
+  const double neg_inf = -std::numeric_limits<double>::infinity();
+  std::vector<double> log_previous_likelihoods(n_particles, neg_inf);
+  std::vector<double> log_proposed_likelihoods(n_particles, neg_inf);
+  std::vector<double> previous_weights(n_particles, 0.0);
+  std::vector<double> proposed_weights(n_particles, 0.0);
   std::uniform_real_distribution<double> dist_u(0.0, 1.0);
-  std::uniform_real_distribution<double> dist_yaw(-M_PI, M_PI);
-  std::normal_distribution<double> dist_rw_xy(0.0, 0.03);
-  std::normal_distribution<double> dist_rw_theta(0.0, 0.04);
 
-  double prior_sum = 0.0;
-  for (const auto & p : particles_) {
-    prior_sum += std::max(0.0, p.weight);
-  }
-  const bool use_uniform_prior = !std::isfinite(prior_sum) || prior_sum <= 0.0;
-  if (use_uniform_prior) {
-    prior_sum = static_cast<double>(n_particles);
-  }
-
-  const double num_beams = static_cast<double>(prepared_scan.beams.empty() ? 1 : prepared_scan.beams.size());
-  constexpr double kEffectiveBeams = 2.5;
-  const double beam_scale = std::min(1.0, kEffectiveBeams / num_beams);
-  const auto & sp = sensor_model_.get_parameters();
-  const double max_beam_prob = std::max(
-    1e-6, sp.z_hit * prepared_scan.hit_gaussian_factor + prepared_scan.random_density);
-
-  auto compute_alpha = [&](double log_w_cand, double log_w_curr) -> double {
-    if (!std::isfinite(log_w_cand)) {
-      return 0.0;
-    }
-    if (!std::isfinite(log_w_curr)) {
-      return 1.0;
-    }
-    const double score_diff = (log_w_cand - log_w_curr) / num_beams;
-    return score_diff >= 0.0 ? 1.0 : std::exp(score_diff);
-  };
-
-  auto sample_valid_motion = [&](const Particle & base) -> Particle {
-    Particle cand = base;
-    for (int attempt = 0; attempt < 10; ++attempt) {
-      cand = base;
-      motion_model_.predict(cand, prev_odom, curr_odom, rng_);
-      if (map_model_.is_free_position(cand.x, cand.y) &&
-        map_model_.get_distance_to_obstacle(cand.x, cand.y) > 0.09)
-      {
-        return cand;
-      }
-    }
-    return cand;
-  };
-
-  // Algorithm 3, lines 4-15: Metropolis-Hastings candidate evaluation at time t
   for (size_t i = 0; i < n_particles; ++i) {
-    const Particle prev_particle = particles_[i];
-    const double prior_weight = use_uniform_prior ?
-      1.0 : std::max(1e-12, prev_particle.weight) / prior_sum;
+    const Particle previous = previous_particles_[i];
+    log_previous_likelihoods[i] =
+      sensor_model_.log_likelihood(previous, prepared_scan, map_model_);
+    log_proposed_likelihoods[i] =
+      sensor_model_.log_likelihood(particles_[i], prepared_scan, map_model_);
+  }
 
-    // Baseline state at time t: propagate particle from t-1 to t using motion model
-    // so wrong-room particles cannot stay frozen at t-1 when the robot moves.
-    Particle chosen = sample_valid_motion(prev_particle);
-    double log_w_chosen = sensor_model_.log_likelihood(chosen, prepared_scan, map_model_);
-
-    // MH Step 1: Propose alternative motion samples from p(x_t | x_{t-1}, u_t)
-    // and accept/reject via Metropolis-Hastings ratio alpha = min(1, w_prop / w_curr)
-    for (int m_step = 0; m_step < 2; ++m_step) {
-      Particle proposed = sample_valid_motion(prev_particle);
-      const double log_w_prop = sensor_model_.log_likelihood(proposed, prepared_scan, map_model_);
-      if (dist_u(rng_) < compute_alpha(log_w_prop, log_w_chosen)) {
-        chosen = proposed;
-        log_w_chosen = log_w_prop;
+  const auto normalize_log_likelihoods = [](
+    const std::vector<double> & log_likelihoods,
+    std::vector<double> & weights)
+    {
+      const double max_log_likelihood =
+        *std::max_element(log_likelihoods.begin(), log_likelihoods.end());
+      if (!std::isfinite(max_log_likelihood)) {
+        return false;
       }
-    }
 
-    // MH Step 2: Local MCMC random-walk refinement (aligned with mh_random_walk in Villela et al.)
-    if (std::isfinite(log_w_chosen)) {
-      Particle rw_cand = chosen;
-      rw_cand.x += dist_rw_xy(rng_);
-      rw_cand.y += dist_rw_xy(rng_);
-      rw_cand.theta = normalize_angle(rw_cand.theta + dist_rw_theta(rng_));
-      const double log_w_rw = sensor_model_.log_likelihood(rw_cand, prepared_scan, map_model_);
-      if (std::isfinite(log_w_rw) && log_w_rw > log_w_chosen) {
-        chosen = rw_cand;
-        log_w_chosen = log_w_rw;
-      }
-    } else if (dist_u(rng_) < 0.03) {
-      // MH boundary proposal: if a particle is trapped inside an obstacle/wall (w_curr = 0),
-      // propose a uniform free-space state with probability 0.03 (accepted with alpha = 1 if valid).
-      double rx = 0.0, ry = 0.0;
-      if (map_model_.sample_free_space(rx, ry, rng_)) {
-        Particle global_cand(rx, ry, dist_yaw(rng_), prev_particle.weight);
-        const double log_w_global = sensor_model_.log_likelihood(global_cand, prepared_scan, map_model_);
-        if (std::isfinite(log_w_global)) {
-          chosen = global_cand;
-          log_w_chosen = log_w_global;
+      double weight_sum = 0.0;
+      for (size_t i = 0; i < log_likelihoods.size(); ++i) {
+        if (std::isfinite(log_likelihoods[i])) {
+          weights[i] = std::exp(log_likelihoods[i] - max_log_likelihood);
+          weight_sum += weights[i];
         }
       }
-    }
+      if (weight_sum <= 0.0 || !std::isfinite(weight_sum)) {
+        return false;
+      }
+      for (double & weight : weights) {
+        weight /= weight_sum;
+      }
+      return true;
+    };
 
-    particles_[i] = chosen;
-    log_obs[i] = log_w_chosen;
-    if (std::isfinite(log_w_chosen)) {
-      log_joint[i] = std::log(prior_weight) + log_w_chosen * beam_scale;
-    }
-  }
+  const bool has_previous_weights =
+    normalize_log_likelihoods(log_previous_likelihoods, previous_weights);
+  const bool has_proposed_weights =
+    normalize_log_likelihoods(log_proposed_likelihoods, proposed_weights);
+  const double num_beams =
+    static_cast<double>(std::max<size_t>(1, prepared_scan.beams.size()));
+  const auto & sensor_params = sensor_model_.get_parameters();
+  const double max_beam_prob = std::max(
+    1e-6,
+    sensor_params.z_hit * prepared_scan.hit_gaussian_factor + prepared_scan.random_density);
 
-  // Line 16: Normalize particle weights using log-sum-exp
-  double max_log = -std::numeric_limits<double>::infinity();
-  for (const double lj : log_joint) {
-    max_log = std::max(max_log, lj);
-  }
+  // Previous per-beam strategy, retained for comparison:
+  // bool accept_proposal = false;
+  // if (std::isfinite(log_w_proposed)) {
+  //   if (!std::isfinite(log_w_previous)) {
+  //     accept_proposal = true;
+  //   } else {
+  //     const double log_diff = (log_w_proposed - log_w_previous) / num_beams;
+  //     const double log_alpha = std::min(0.0, log_diff);
+  //     accept_proposal = dist_u(rng_) < std::exp(log_alpha);
+  //   }
+  // }
 
-  double average_likelihood = 0.0;
-  if (std::isfinite(max_log)) {
-    double sum_exp = 0.0;
-    for (const double lj : log_joint) {
-      if (std::isfinite(lj)) {
-        sum_exp += std::exp(lj - max_log);
+  double selected_weight_sum = 0.0;
+  double likelihood_sum = 0.0;
+  for (size_t i = 0; i < n_particles; ++i) {
+    bool accept_proposal = false;
+    const double previous_weight = has_previous_weights ? previous_weights[i] : 0.0;
+    const double proposed_weight = has_proposed_weights ? proposed_weights[i] : 0.0;
+
+    if (proposed_weight > 0.0) {
+      if (previous_weight <= 0.0) {
+        accept_proposal = true;
+      } else {
+        const double acceptance_probability =
+          std::min(1.0, proposed_weight / previous_weight);
+        accept_proposal = dist_u(rng_) < acceptance_probability;
       }
     }
 
-    const double log_normalizer = max_log + std::log(sum_exp);
-    for (size_t i = 0; i < n_particles; ++i) {
-      particles_[i].weight = std::isfinite(log_joint[i]) ?
-        std::exp(log_joint[i] - log_normalizer) : 0.0;
+    if (!accept_proposal) {
+      particles_[i] = previous_particles_[i];
     }
+    particles_[i].weight = accept_proposal ? proposed_weight : previous_weight;
+    selected_weight_sum += particles_[i].weight;
+    const double selected_log_likelihood = accept_proposal ?
+      log_proposed_likelihoods[i] : log_previous_likelihoods[i];
+    if (std::isfinite(selected_log_likelihood)) {
+      likelihood_sum += std::exp(selected_log_likelihood / num_beams) / max_beam_prob;
+    }
+  }
 
-    // Return the average normalized per-beam observation likelihood across particles in [0, 1]
-    double sum_per_beam = 0.0;
-    for (const double lw : log_obs) {
-      if (std::isfinite(lw)) {
-        sum_per_beam += std::exp(lw / num_beams) / max_beam_prob;
-      }
+  if (selected_weight_sum > 0.0 && std::isfinite(selected_weight_sum)) {
+    for (auto & particle : particles_) {
+      particle.weight /= selected_weight_sum;
     }
-    average_likelihood = sum_per_beam / static_cast<double>(n_particles);
   } else {
     const double uniform_weight = 1.0 / static_cast<double>(n_particles);
-    for (auto & p : particles_) {
-      p.weight = uniform_weight;
+    for (auto & particle : particles_) {
+      particle.weight = uniform_weight;
     }
   }
 
-  return average_likelihood;
+  return likelihood_sum / static_cast<double>(n_particles);
 }
 
 }  // namespace montecarlo_localization

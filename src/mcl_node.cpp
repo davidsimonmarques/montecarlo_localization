@@ -1,4 +1,5 @@
 #include "montecarlo_localization/mcl_node.hpp"
+#include <chrono>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
@@ -51,6 +52,8 @@ void MCLNode::setup_node()
   // Publishers:
   pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(pose_topic_, 10);
   particlecloud_pub_ = this->create_publisher<geometry_msgs::msg::PoseArray>(particlecloud_topic_, 10);
+  filter_cycle_pub_ = this->create_publisher<std_msgs::msg::Float64>(
+    "/" + std::string(this->get_name()) + "/filter_cycle_ms", 10);
 
   // TF broadcasting is handled synchronously in odom_callback and scan_callback
   // using sensor message stamps to stay synchronized with the simulation clock.
@@ -341,7 +344,16 @@ void MCLNode::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
 
   if (moved || force) {
     // Apply prediction, measurement weighting, and resampling as one filter iteration.
+    const auto cycle_start = std::chrono::steady_clock::now();
     engine_->process_update(last_update_odom_pose_, curr_odom_pose_, *msg);
+    auto est = engine_->get_estimate();
+    const auto cycle_end = std::chrono::steady_clock::now();
+
+    std_msgs::msg::Float64 cycle_duration;
+    cycle_duration.data =
+      std::chrono::duration<double, std::milli>(cycle_end - cycle_start).count();
+    filter_cycle_pub_->publish(cycle_duration);
+
     last_update_odom_pose_ = curr_odom_pose_;
     scan_update_count_++;
 
@@ -349,8 +361,6 @@ void MCLNode::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
       force_initial_update_ = false;
       RCLCPP_INFO(this->get_logger(), "First sensor update completed. Publishing initial pose estimate.");
     }
-
-    auto est = engine_->get_estimate();
 
     if (global_localization_on_start_ && (scan_update_count_ % 10 == 0)) {
       RCLCPP_INFO(this->get_logger(),
