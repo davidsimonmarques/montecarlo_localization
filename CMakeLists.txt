@@ -155,6 +155,7 @@ install(
 
 install(PROGRAMS
   scripts/run_automated_experiments.py
+  scripts/run_bag_experiments.py
   scripts/processar_experimentos.py
   DESTINATION lib/${PROJECT_NAME}
 )

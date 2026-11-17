@@ -135,7 +135,7 @@ montecarlo_localization_node:
     publish_tf: true
 
     # Filter Particle Parameters
-    num_particles: 12000
+    num_particles: 6000
     update_min_d: 0.05
     update_min_a: 0.05
     resample_on_update: true
@@ -156,7 +156,7 @@ montecarlo_localization_node:
     min_range: 0.10
     max_range: 5.0
     beam_skip: 1
-    max_beams: 80
+    max_beams: 45
 
     # Augmented MCL Recovery (desativado no MCL padrão)
     enable_recovery: false
@@ -194,11 +194,11 @@ amcl_node:
 
     # Particle Count Configuration (alinhado ao artigo Villela et al. IEEE DASC 2025)
     enable_kld: false           # Desativa variação KLD para operar com N fixo como no artigo
-    num_particles: 12000        # 12.000 partículas (idêntico ao MCL e MH-MCL para comparação justa)
+    num_particles: 6000        # 12.000 partículas (idêntico ao MCL e MH-MCL para comparação justa)
 
     # KLD-Sampling Adaptive Particle Filter Parameters (ativado apenas se enable_kld: true)
     min_particles: 3000
-    max_particles: 12000
+    max_particles: 6000
     kld_err: 0.05
     kld_z: 2.32635
     spatial_resolution_x: 0.5
@@ -225,12 +225,12 @@ amcl_node:
     min_range: 0.10
     max_range: 5.0
     beam_skip: 1
-    max_beams: 80
+    max_beams: 45
 
     # Augmented MCL Recovery
-    enable_recovery: false
+    enable_recovery: true
     alpha_slow: 0.001
-    alpha_fast: 0.02
+    alpha_fast: 0.1
     recovery_max_prob: 0.02
 
     # Initial Pose
@@ -262,28 +262,28 @@ mhmcl_node:
     publish_tf: false
 
     # Filter Particle Parameters
-    num_particles: 12000
+    num_particles: 6000
     update_min_d: 0.05
     update_min_a: 0.05
     resample_on_update: true
     resample_interval: 1
-    selective_resampling: true
+    selective_resampling: false
     resample_threshold_ratio: 0.5
 
-    # Odometry Motion Model Noise Parameters (calibrados para FAST-LIO2)
-    alpha1: 0.01
-    alpha2: 0.005
-    alpha3: 0.01
-    alpha4: 0.005
+    # Odometry Motion Model Noise Parameters (calibrados para FAST-LIO2; std linear no MHMCLEngine)
+    alpha1: 0.03
+    alpha2: 0.015
+    alpha3: 0.03
+    alpha4: 0.015
 
     # Sensor Model Parameters
     z_hit: 0.90
     z_rand: 0.10
-    sigma_hit: 0.20
+    sigma_hit: 0.10
     min_range: 0.10
     max_range: 5.0
     beam_skip: 1
-    max_beams: 80
+    max_beams: 45
 
     # Recovery (desativado no MH-MCL, conforme Algoritmo 3 linha 20 de Villela et al. 2025)
     enable_recovery: false
@@ -321,11 +321,11 @@ mhamcl_node:
 
     # Particle Count Configuration (alinhado ao artigo Villela et al. IEEE DASC 2025)
     enable_kld: false           # Desativa variação KLD para operar com N fixo como no artigo
-    num_particles: 12000        # 12.000 partículas (idêntico ao MCL e MH-MCL para comparação justa)
+    num_particles: 6000        # 12.000 partículas (idêntico ao MCL e MH-MCL para comparação justa)
 
     # KLD-Sampling Adaptive Particle Parameters (ativado apenas se enable_kld: true)
     min_particles: 3000
-    max_particles: 12000
+    max_particles: 6000
     kld_err: 0.05
     kld_z: 2.32635
     spatial_resolution_x: 0.5
@@ -336,28 +336,28 @@ mhamcl_node:
     update_min_a: 0.05
     resample_on_update: true
     resample_interval: 1
-    selective_resampling: true
+    selective_resampling: false
     resample_threshold_ratio: 0.5
 
-    # Odometry Motion Model Noise Parameters (calibrados para FAST-LIO2)
-    alpha1: 0.01
-    alpha2: 0.005
-    alpha3: 0.01
-    alpha4: 0.005
+    # Odometry Motion Model Noise Parameters (calibrados para FAST-LIO2; std linear no MHMCLEngine)
+    alpha1: 0.03
+    alpha2: 0.015
+    alpha3: 0.03
+    alpha4: 0.015
 
     # Sensor Model Parameters
     z_hit: 0.90
     z_rand: 0.10
-    sigma_hit: 0.20
+    sigma_hit: 0.10
     min_range: 0.10
     max_range: 5.0
     beam_skip: 1
-    max_beams: 80
+    max_beams: 45
 
     # Mixed Resampling with recovery
-    enable_recovery: false
+    enable_recovery: true
     alpha_slow: 0.001
-    alpha_fast: 0.02
+    alpha_fast: 0.1
     recovery_max_prob: 0.02
 
     # Initial Pose

@@ -9,18 +9,20 @@ montecarlo_localization_node:
     scan_topic: "/scan"
     map_topic: "/map"
     odom_topic: "/odom"
+    pose_topic: "/mcl_pose"
+    particlecloud_topic: "/particlecloud"
 
     # TF Publishing
     publish_tf: true
 
     # Filter Particle Parameters
-    num_particles: 12000
-    update_min_d: 0.05         # Metros minimos para disparar update com laser
-    update_min_a: 0.05         # Radianos minimos para disparar update com laser
-    resample_on_update: true  # Permite reamostragem durante as atualizacoes do sensor
-    resample_interval: 1     # Intervalo de updates entre reamostragens (1 = toda atualizacao elegivel)
-    selective_resampling: true # Reamostragem seletiva: so reamostra se Neff < N * resample_threshold_ratio
-    resample_threshold_ratio: 0.5 # Limiar pratico de Neff recomendado na literatura (Thrun et al.: Neff < N/2)
+    num_particles: 6000
+    update_min_d: 0.05
+    update_min_a: 0.05
+    resample_on_update: true
+    resample_interval: 1
+    selective_resampling: true
+    resample_threshold_ratio: 0.5
 
     # Odometry Motion Model Noise Parameters (alpha1 - alpha4)
     # alpha1: calibrado para derrapagem do Husky (skid-steer) no CoppeliaSim
@@ -39,7 +41,7 @@ montecarlo_localization_node:
     min_range: 0.1
     max_range: 5.0
     beam_skip: 1              # Subamostragem de feixes do laser
-    max_beams: 60            # Maximo de feixes processados por scan
+    max_beams: 50
 
     # Classical MCL (sem recuperacao no baseline, simples reamostragem)
     enable_recovery: false
@@ -53,6 +55,6 @@ montecarlo_localization_node:
     initial_pose_x: 11.16
     initial_pose_y: -8.77
     initial_pose_yaw: -3.1232 #rad
-    initial_cov_x: 0.25                # Covariancia inicial em X (sigma = 0.5 m)
-    initial_cov_y: 0.25                # Covariancia inicial em Y (sigma = 0.5 m)
+    initial_cov_x: 0.01
+    initial_cov_y: 0.01
     initial_cov_yaw: 0.068             # Covariancia inicial em Yaw (sigma ~ 15 graus)
